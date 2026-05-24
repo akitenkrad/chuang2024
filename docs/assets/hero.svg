@@ -1,0 +1,74 @@
+<!-- chuang2024 hero. Vault SVG style contract (palette + dark mode). -->
+<svg width="100%" viewBox="0 0 900 300" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>Chuang et al. 2024 — Simulating Opinion Dynamics with Networks of LLM-based Agents</title>
+<desc>LLM-based agents on a network exchange tweets in dyadic interactions; a listener reviews a speaker's tweet and updates a 5-point Likert opinion. Without confirmation bias opinions converge toward the truth; injecting confirmation bias fragments them.</desc>
+<style>
+  .t  { font-family: -apple-system, "Helvetica Neue", "Hiragino Sans", sans-serif; font-size: 14px; fill: #2C2C2A; }
+  .ts { font-family: -apple-system, "Helvetica Neue", "Hiragino Sans", sans-serif; font-size: 13px; fill: #444441; }
+  .tl { font-family: -apple-system, "Helvetica Neue", "Hiragino Sans", sans-serif; font-size: 12px; font-weight: 600; fill: #534AB7; letter-spacing: 2px; }
+  .title { font-family: -apple-system, "Helvetica Neue", "Hiragino Sans", sans-serif; font-size: 28px; font-weight: 600; fill: #2C2C2A; }
+  .glab { font-family: -apple-system, "Helvetica Neue", "Hiragino Sans", sans-serif; font-size: 11px; font-weight: 500; fill: #888780; letter-spacing: 0.5px; }
+  .axis { stroke: #C7C5BD; stroke-width: 1; }
+  .edge { stroke: #C7C5BD; stroke-width: 1; opacity: 0.7; }
+  .traj { stroke: #534AB7; stroke-width: 1.4; fill: none; opacity: 0.55; }
+  .trajT { stroke: #0F6E56; stroke-width: 1.4; fill: none; opacity: 0.55; }
+  .node { fill: #534AB7; }
+  .nodeT { fill: #0F6E56; }
+  .dot { fill: #534AB7; }
+  @media (prefers-color-scheme: dark) {
+    .t  { fill: #E5E5E2; }
+    .ts { fill: #C7C5BD; }
+    .tl { fill: #AFA9EC; }
+    .title { fill: #E5E5E2; }
+    .glab { fill: #8C8B85; }
+    .axis { stroke: #5F5E5A; }
+    .edge { stroke: #5F5E5A; }
+    .traj { stroke: #AFA9EC; }
+    .trajT { stroke: #5DCAA5; }
+    .node { fill: #AFA9EC; }
+    .nodeT { fill: #5DCAA5; }
+    .dot { fill: #AFA9EC; }
+  }
+</style>
+
+<!-- left: label + title -->
+<text x="40" y="60" class="tl">LLM OPINION DYNAMICS</text>
+<text x="40" y="96" class="title">Networks of</text>
+<text x="40" y="128" class="title">LLM-based Agents</text>
+<text x="40" y="162" class="ts">Chuang et al. (2024)</text>
+<text x="40" y="184" class="t">o_j = f_oc( review( tweet(o_i) ) )</text>
+<text x="40" y="210" class="glab">dyadic · 5-point Likert {−2..2}</text>
+<text x="40" y="234" class="glab">truth convergence · confirmation-bias fragmentation</text>
+
+<!-- middle: small interaction network -->
+<g transform="translate(470, 70)">
+  <line x1="40" y1="20" x2="120" y2="10" class="edge"/>
+  <line x1="40" y1="20" x2="20" y2="100" class="edge"/>
+  <line x1="40" y1="20" x2="110" y2="90" class="edge"/>
+  <line x1="120" y1="10" x2="110" y2="90" class="edge"/>
+  <line x1="20" y1="100" x2="110" y2="90" class="edge"/>
+  <line x1="120" y1="10" x2="20" y2="100" class="edge"/>
+  <circle cx="40" cy="20" r="7" class="node"/>
+  <circle cx="120" cy="10" r="7" class="nodeT"/>
+  <circle cx="20" cy="100" r="7" class="nodeT"/>
+  <circle cx="110" cy="90" r="7" class="node"/>
+  <text x="65" y="150" class="glab" text-anchor="middle">network of agents</text>
+</g>
+
+<!-- right: opinion trajectory converging on a 5-point scale -->
+<g transform="translate(660, 40)">
+  <line x1="0" y1="0" x2="0" y2="200" class="axis"/>
+  <line x1="0" y1="200" x2="200" y2="200" class="axis"/>
+  <text x="-8" y="6" class="glab" text-anchor="end">+2</text>
+  <text x="-8" y="104" class="glab" text-anchor="end">0</text>
+  <text x="-8" y="204" class="glab" text-anchor="end">−2</text>
+  <text x="100" y="224" class="glab" text-anchor="middle">time t</text>
+
+  <!-- trajectories converging toward a positive (truth) consensus -->
+  <path class="traj" d="M0 180 C 60 140, 120 90, 200 70"/>
+  <path class="traj" d="M0 30 C 60 50, 120 64, 200 70"/>
+  <path class="traj" d="M0 120 C 60 100, 120 80, 200 70"/>
+  <path class="trajT" d="M0 150 C 60 120, 120 86, 200 72"/>
+  <circle cx="200" cy="70" r="4" class="dot"/>
+</g>
+</svg>
