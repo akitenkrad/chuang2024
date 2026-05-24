@@ -50,12 +50,12 @@ The LLM layer is **not** under `SimRng`. Its reproducibility comes entirely from
 The optional `socsim-llm` crate (feature `live` = `ollama` + `openai`) provides the building blocks; this project composes them in `src/llm.rs`:
 
 ```
-CachingClient< BoxedClient( FallbackClient< OllamaClient, OpenAiClient > ) >
+CachingClient< Box<dyn LlmClient> >   // erased: FallbackClient< OllamaClient, OpenAiClient > (prod) | ScriptedClient (tests)
 ```
 
 - `FallbackClient` tries the primary (Ollama) and, on **any** error, falls back to the secondary (OpenAI). This is provided by `socsim-llm` — we do not hand-roll it.
 - `CachingClient` wraps it with a `PromptCache` (`hash(prompt+model)` → response, FNV-1a, JSON-file-backed). Its `complete(&mut self, …)` takes a mutable borrow because a miss updates the cache.
-- `BoxedClient` is a small newtype implementing `LlmClient` for `Box<dyn LlmClient>`, so the same `OpinionClient` type can carry either the live `FallbackClient` (production) or a `mock::ScriptedClient` (tests / `mock_smoke`).
+- The backend is type-erased to `Box<dyn LlmClient>`, so the same `OpinionClient` type carries either the live `FallbackClient` (production) or a `mock::ScriptedClient` (tests / `mock_smoke`). `socsim-llm` implements `LlmClient` for `Box<T>` (issue #26), so no local newtype is needed.
 - `OllamaClient::from_env()` reads `OLLAMA_HOST` (default `http://localhost:11434`) / `OLLAMA_MODEL` (default in `socsim-llm` is `llama3.1`; this project's CLI defaults `OLLAMA_MODEL` to `llama3.2:latest`). `OpenAiClient::from_env()` reads `OPENAI_API_KEY` / `OPENAI_MODEL`.
 
 The client and a `MetadataCollector` are shared between the mechanism and the run driver via `Rc<RefCell<…>>`, because the engine owns the boxed mechanisms; after the run the driver reads the cache stats and saves the cache.
