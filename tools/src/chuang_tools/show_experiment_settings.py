@@ -10,29 +10,41 @@ Usage:
     chuang-tools show-experiment-settings
     chuang-tools show-experiment-settings --results-dir results/20260524_153000
     chuang-tools show-experiment-settings --results-dir results/latest --json
+
+I/O・run 設定テーブル・LLM メタデータブロックは共有ヘルパ `socsim_tools` に委譲する
+(出力はバイト等価)．sweep 設定テーブルと `--json` の `kind` フィールドは chuang 固有
+なので本モジュールに残す．
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
+from socsim_tools.io import load_run_metadata, resolve_results_dir
+from socsim_tools.settings import render_run_config, render_run_metadata
 
-def _resolve_results_dir(arg: str) -> Path:
-    """ユーザ指定の results_dir を絶対パスに解決する (symlink も実体へ)．"""
-    p = Path(arg)
-    if not p.is_absolute():
-        candidates = [Path.cwd() / arg, p]
-        for c in candidates:
-            if c.exists():
-                p = c
-                break
-        else:
-            p = candidates[0]
-    return Path(os.path.realpath(p))
+# config キー → 表示ラベル (右コロン位置を揃えるため空白パディング済み)．
+# render_run_config が `f"{label}: {value}"` で整形するため，ラベルは末尾の
+# `: ` を含めず，従来の run レンダラと同じ桁揃えになるようパディングする．
+FIELD_LABELS = {
+    "n_agents": "エージェント数 N ",
+    "topic": "トピック         ",
+    "framing": "フレーミング     ",
+    "bias": "確証バイアス     ",
+    "memory_mode": "メモリ方式       ",
+    "interact": "相互作用         ",
+    "topology": "トポロジ         ",
+    "events_per_step": "events/step      ",
+    "max_steps": "最大ステップ T   ",
+    "tol": "収束 tol         ",
+    "seed": "シード (コア)    ",
+    "llm_temperature": "LLM 温度         ",
+    "llm_seed": "LLM seed         ",
+    "output_dir": "出力先           ",
+}
 
 
 def _find_config_file(results_dir: Path) -> tuple[Path, str]:
@@ -49,40 +61,8 @@ def _find_config_file(results_dir: Path) -> tuple[Path, str]:
     )
 
 
-def _load_run_metadata(results_dir: Path) -> dict | None:
-    path = results_dir / "run_metadata.json"
-    if path.exists():
-        with path.open() as f:
-            return json.load(f)
-    return None
-
-
-def render_run_config(cfg: dict, source: Path) -> str:
-    lines: list[str] = []
-    lines.append("=" * 70)
-    lines.append("実行設定 (run)")
-    lines.append("=" * 70)
-    lines.append(f"設定ファイル: {source}")
-    lines.append("-" * 70)
-    lines.append(f"エージェント数 N : {cfg.get('n_agents', '-')}")
-    lines.append(f"トピック         : {cfg.get('topic', '-')}")
-    lines.append(f"フレーミング     : {cfg.get('framing', '-')}")
-    lines.append(f"確証バイアス     : {cfg.get('bias', '-')}")
-    lines.append(f"メモリ方式       : {cfg.get('memory_mode', '-')}")
-    lines.append(f"相互作用         : {cfg.get('interact', '-')}")
-    lines.append(f"トポロジ         : {cfg.get('topology', '-')}")
-    lines.append(f"events/step      : {cfg.get('events_per_step', '-')}")
-    lines.append(f"最大ステップ T   : {cfg.get('max_steps', '-')}")
-    lines.append(f"収束 tol         : {cfg.get('tol', '-')}")
-    lines.append(f"シード (コア)    : {cfg.get('seed', '-')}")
-    lines.append(f"LLM 温度         : {cfg.get('llm_temperature', '-')}")
-    lines.append(f"LLM seed         : {cfg.get('llm_seed', '-')}")
-    lines.append(f"出力先           : {cfg.get('output_dir', '-')}")
-    lines.append("=" * 70)
-    return "\n".join(lines)
-
-
 def render_sweep_config(cfg: dict, source: Path) -> str:
+    """sweep 設定テーブルを整形する (chuang 固有; リスト項目を `, ` 連結する)．"""
     lines: list[str] = []
     lines.append("=" * 70)
     lines.append("実行設定 (sweep)")
@@ -106,28 +86,6 @@ def render_sweep_config(cfg: dict, source: Path) -> str:
     return "\n".join(lines)
 
 
-def render_run_metadata(meta: dict) -> str:
-    lines: list[str] = []
-    lines.append("")
-    lines.append("LLM 実行メタデータ (run_metadata.json)")
-    lines.append("-" * 70)
-    lines.append(f"モデル           : {meta.get('llm_model', '-')}")
-    lines.append(f"endpoint         : {meta.get('llm_endpoint', '-')}")
-    lines.append(f"温度             : {meta.get('llm_temperature', '-')}")
-    lines.append(f"seed             : {meta.get('llm_seed', '-')}")
-    lines.append(f"呼び出し総数     : {meta.get('total_calls', '-')}")
-    lines.append(f"cache-hit        : {meta.get('cache_hits', '-')}")
-    rate = meta.get("cache_hit_rate")
-    if rate is not None:
-        lines.append(f"cache-hit 率     : {rate * 100:.1f}%")
-    note = meta.get("determinism_note")
-    if note:
-        lines.append("-" * 70)
-        lines.append(f"注記: {note}")
-    lines.append("=" * 70)
-    return "\n".join(lines)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="chuang-tools show-experiment-settings",
@@ -147,22 +105,26 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    results_dir = _resolve_results_dir(args.results_dir)
+    results_dir = resolve_results_dir(args.results_dir)
     if not results_dir.exists():
         print(f"エラー: ディレクトリが存在しません: {results_dir}", file=sys.stderr)
         return 1
 
-    cfg_path, kind = _find_config_file(results_dir)
+    try:
+        cfg_path, kind = _find_config_file(results_dir)
+    except FileNotFoundError as exc:
+        print(f"エラー: {exc}", file=sys.stderr)
+        return 1
     with cfg_path.open() as f:
         cfg = json.load(f)
-    meta = _load_run_metadata(results_dir)
+    meta = load_run_metadata(results_dir)
 
     if args.json:
         payload = {"source": str(cfg_path), "kind": kind, "config": cfg, "run_metadata": meta}
         print(json.dumps(payload, indent=2, ensure_ascii=False))
     else:
         if kind == "run":
-            print(render_run_config(cfg, cfg_path))
+            print(render_run_config(cfg, cfg_path, FIELD_LABELS))
         else:
             print(render_sweep_config(cfg, cfg_path))
         if meta is not None:
