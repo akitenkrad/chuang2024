@@ -20,5 +20,6 @@ pub mod llm;
 pub mod mechanisms;
 pub mod metrics;
 pub mod prompts;
+pub mod reproduce_mock;
 pub mod simulation;
 pub mod world;

@@ -4,11 +4,10 @@ Usage:
     chuang-tools visualize [...]
     chuang-tools visualize-sweep [...]
     chuang-tools show-experiment-settings [...]
+    chuang-tools reproduce [...]
 
 各サブコマンドに続く引数は，対応するモジュールの argparse がそのまま受け取る．
 サブコマンドレベルで `--help` を付けると，そのサブコマンド自身のヘルプが表示される．
-
-`reproduce` (論文 Table 1 / Fig.4-6 の一括再現) は Phase 3 で実装予定 (未提供)．
 
 dispatcher の組み立ては共有ヘルパ `socsim_tools.cli.build_dispatcher` に委譲する
 (prog 名・サブコマンド・ヘルプ文・argv ルーティングは従来と同一)．可視化/設定表示の
@@ -34,6 +33,10 @@ main = build_dispatcher(
         "show-experiment-settings": (
             "実行結果ディレクトリの設定 (config / sweep_config / run_metadata) の表示",
             "chuang_tools.show_experiment_settings:main",
+        ),
+        "reproduce": (
+            "論文 4.3 見出し的知見 (合意→断片化 / 非相互作用統制 / topology 比較) の一括再現と図",
+            "chuang_tools.reproduce_paper:main",
         ),
     },
 )

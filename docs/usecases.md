@@ -15,28 +15,50 @@ uv run chuang-tools visualize
 
 See [CLI](cli.md) for every flag and [Visualization](visualization.md) for the plots.
 
-## 2. Reproduce the qualitative findings
+## 2. Reproduce the paper's headline findings in one command
 
-- **Truthful consensus without bias.** With `--bias none`, opinions should converge and diversity `D` should shrink (`true` framing tends to a positive bias, `false` framing to a negative bias).
-- **Fragmentation under confirmation bias.** Increasing `--bias none → weak → strong` should raise the final diversity `D` monotonically. Run a sweep and read the per-bias `D̄`.
+`reproduce` runs the bias × control matrix and the topology comparison, checks the observed values against the paper's qualitative claims, and draws the figures:
+
+```bash
+# Offline (no LLM): structurally reproduce the findings with the deterministic mock
+cargo run --release -- reproduce --mock --seed 42
+uv run chuang-tools reproduce --run --mock          # same, plus figures + report
+```
+
+It checks: truthful consensus without bias (diversity `D` collapses), monotone increase of `D` with confirmation bias (`none → weak → strong`), and that removing interaction prevents consensus. Because the local model differs from the paper's `gpt-3.5-turbo`, the targets are qualitative (sign of `B`, monotonicity of `D`) — see the determinism note in the [README](../README.md).
+
+You can also drive the pieces by hand:
+
+- **Truthful consensus without bias.** With `--bias none`, opinions converge and `D` shrinks (`true` framing → positive bias, `false` framing → negative bias).
+- **Fragmentation under confirmation bias.** Increasing `--bias none → weak → strong` raises the final `D` monotonically. Run a sweep and read the per-bias `D̄`.
 
 ```bash
 cargo run --release -- sweep --bias-values none,weak,strong --framing-values true,false --topology-values full --runs 5 --seed 42
 uv run chuang-tools visualize-sweep
 ```
 
-Because the local model differs from the paper's `gpt-3.5-turbo`, treat the targets as qualitative (sign of `B`, monotonicity of `D`) — see the determinism note in the [README](../README.md).
+## 3. Isolate social influence with the non-interaction control
 
-## 3. Explore the network-topology extension (beyond the paper)
-
-The paper uses an all-to-all graph. Here you can switch to `ws` (Watts–Strogatz small-world) or `ba` (Barabási–Albert scale-free) and compare convergence time / cluster counts.
+The key ablation: run the agents **without** letting them see neighbours, so you separate "opinions change because of the network" from "opinions drift because of the LLM's own prior".
 
 ```bash
-cargo run --release -- sweep --topology-values full,ws,ba --bias-values none,strong --framing-values true --runs 5 --seed 42
+# Control arm (isolated) vs the normal interaction arm — compare the final diversity D
+cargo run --release -- run --control no-interaction --bias none --seed 42
+cargo run --release -- run --control interaction    --bias none --seed 42
+```
+
+The `reproduce` summary and `chuang-tools reproduce` surface this contrast directly (the `bias_control_matrix` and `control_contrast` figures).
+
+## 4. Explore the network-topology extension
+
+The paper uses an all-to-all graph. Here you can switch to `er` (Erdős–Rényi), `ws` (Watts–Strogatz small-world) or `ba` (Barabási–Albert scale-free) and compare convergence time / cluster counts.
+
+```bash
+cargo run --release -- sweep --topology-values full,er,ws,ba --bias-values none,strong --framing-values true --runs 5 --seed 42
 uv run chuang-tools visualize-sweep
 ```
 
-## 4. Reproduce / rerun cheaply with the prompt cache
+## 5. Rerun cheaply with the prompt cache
 
 The first run populates `.llm_cache/cache.json`. Re-running an identical configuration replays cached responses — no live LLM calls, so it is fast, free and stable. Check the cache-hit rate:
 
@@ -46,7 +68,7 @@ uv run chuang-tools show-experiment-settings --results-dir results/latest
 
 A second identical run should report a high cache-hit rate and few/zero new calls.
 
-## 5. Develop and test offline (no live LLM)
+## 6. Develop and test offline (no live LLM)
 
 The integration tests drive the simulation with `socsim-llm`'s `mock::ScriptedClient`, so they need no network:
 
@@ -57,7 +79,9 @@ cargo test
 For an offline end-to-end smoke that writes real output files (useful in a sandbox or CI without Ollama):
 
 ```bash
-cargo run --release --example mock_smoke -- results
+cargo run --release --example mock_smoke -- results   # single mock run
+cargo run --release -- run --mock --max-steps 40       # mock via the run subcommand
+cargo run --release -- reproduce --mock --quick        # mock reproduce, all arms
 uv run chuang-tools visualize
 ```
 

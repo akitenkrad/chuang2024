@@ -1,6 +1,6 @@
 # CLI
 
-The Rust binary is `chuang` (run via `cargo run --release -- …`). It has two subcommands: `run` and `sweep`. The `reproduce` subcommand (paper Table 1 / Fig. 4–6) is deferred to Phase 3.
+The Rust binary is `chuang` (run via `cargo run --release -- …`). It has three subcommands: `run` (a single configuration), `sweep` (a parameter grid) and `reproduce` (a one-command reproduction of the paper's headline findings).
 
 ## LLM environment variables
 
@@ -23,9 +23,15 @@ export OLLAMA_MODEL=llama3.2:latest
 ```bash
 cargo run --release -- run \
     --n-agents 10 --topic flat_earth --framing false --bias none \
-    --memory cumulative --topology full \
+    --memory cumulative --topology full --control interaction \
     --events-per-step 1 --max-steps 100 --tol 1e-6 --seed 42 \
     --temperature 0 --llm-seed 0 --cache-path .llm_cache/cache.json
+
+# Offline (no LLM): drive a deterministic scripted mock instead of Ollama/OpenAI
+cargo run --release -- run --mock --n-agents 10 --max-steps 40 --seed 42
+
+# Non-interaction control arm: agents evolve WITHOUT seeing neighbours
+cargo run --release -- run --control no-interaction --bias none --seed 42
 ```
 
 | Flag | Default | Meaning |
@@ -34,8 +40,10 @@ cargo run --release -- run \
 | `--topic` | `flat_earth` | discussion topic (ground-truth known; underscores allowed) |
 | `--framing` | `false` | `true` / `false` framing of the claim |
 | `--bias` | `none` | confirmation bias: `none` / `weak` / `strong` |
-| `--memory` | `cumulative` | memory mode: `cumulative` / `reflective` (reflective is a Phase 3 stub) |
-| `--topology` | `full` | `full` (complete graph) / `ws` (Watts–Strogatz) / `ba` (Barabási–Albert) |
+| `--memory` | `cumulative` | memory mode: `cumulative` / `reflective` |
+| `--control` | `interaction` | `interaction` (normal) / `no-interaction` (agents evolve in isolation, never seeing neighbours — the key ablation separating social influence from the LLM's intrinsic drift) |
+| `--mock` | off | drive a deterministic scripted client offline (no Ollama/OpenAI; for CI and sandboxes) |
+| `--topology` | `full` | `full` (complete graph) / `er` (Erdős–Rényi) / `ws` (Watts–Strogatz) / `ba` (Barabási–Albert) |
 | `--ws-k` | `4` | WS initial degree k (even) |
 | `--ws-beta` | `0.1` | WS rewiring probability β |
 | `--ba-m` | `2` | BA edges per new node m |
@@ -71,7 +79,7 @@ cargo run --release -- sweep \
 |---|---|---|
 | `--bias-values` | `none,weak,strong` | comma-separated confirmation-bias grid |
 | `--framing-values` | `true,false` | comma-separated framing grid |
-| `--topology-values` | `full` | comma-separated topology grid |
+| `--topology-values` | `full` | comma-separated topology grid (`full` / `er` / `ws` / `ba`) |
 | `--memory` | `cumulative` | single memory mode for the whole sweep |
 | `--topic` | `flat_earth` | discussion topic |
 | `--n-agents` | `10` | number of agents N |
@@ -92,6 +100,46 @@ Outputs land in `results/{timestamp}_sweep/`:
 The console prints the per-bias mean diversity `D̄` — the paper's headline is that `D̄` increases monotonically `none → weak → strong`.
 
 > **Cost note.** Each step issues two LLM calls (speaker + listener) plus an occasional classifier fallback. A sweep multiplies that by conditions × runs × steps. Keep the cache shared across the sweep so repeated prompts are free, and start with small `--n-agents` / `--max-steps` / `--runs`.
+
+## `reproduce` — the paper's headline findings, in one command
+
+```bash
+# Offline (no LLM): structurally reproduce the headline findings with the mock
+cargo run --release -- reproduce --mock --seed 42
+
+# Quick smoke (smaller N / runs / steps)
+cargo run --release -- reproduce --mock --quick
+
+# Live (Ollama / OpenAI), sharing one prompt cache
+cargo run --release -- reproduce --cache-path .llm_cache/cache.json --seed 42
+```
+
+`reproduce` runs three things and writes a single summary:
+
+1. **bias × control matrix** (on the full graph) — confirmation bias `none / weak / strong` crossed with the `interaction` and `no-interaction` arms. This reproduces the paper's core result — no bias drives a consensus toward the *truthful* pole (diversity `D` collapses), while a strong confirmation bias breaks consensus and keeps `D` high (fragmentation) — and isolates that drift with the non-interaction control.
+2. **topology comparison** (bias `none`, interaction) — final `D` and convergence step across `full / er / ws / ba`; denser graphs converge faster.
+3. **headline anchors** — observed-vs-paper checks (consensus drift under no bias; monotone `D` increase with bias; interaction-drives-consensus; social amplification of drift), each marked `PASS` / `OFF`.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--n-agents` | `12` | number of agents N |
+| `--topic` / `--framing` | `flat_earth` / `false` | topic and framing (false framing → the truthful pole is `−2`) |
+| `--runs` | `5` | independent trials per condition |
+| `--events-per-step` | `2` | dyadic interactions per tick |
+| `--max-steps` | `40` | maximum steps T |
+| `--topology-values` | `full,er,ws,ba` | topologies used in the comparison |
+| `--seed` | `42` | root seed (each condition/run derives an independent stream) |
+| `--mock` | off | drive the deterministic scripted client offline (no LLM) |
+| `--quick` | off | shrink N / runs / steps for a fast smoke check |
+| `--cache-path` | `.llm_cache/cache.json` | shared prompt cache (live mode only) |
+| `--output-dir` | `results` | base output directory |
+
+Outputs land in `results/reproduce_{timestamp}/`:
+
+- `reproduce_summary.json` — the bias × control matrix, the topology comparison, and the anchor table (observed vs paper, with `PASS` / `OFF`).
+- `metrics_{condition}.csv` — the representative-run metric history per condition (used by the Python `reproduce` to draw the `D` time series).
+
+The Python `chuang-tools reproduce` reads this summary and renders the figures; see [Visualization](visualization.md).
 
 ---
 *This file was generated by Claude Code.*

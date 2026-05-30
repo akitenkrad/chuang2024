@@ -11,20 +11,21 @@ chuang2024/
 ├── simulation/                 # Rust crate `chuang-opinion-simulation` (bin `chuang`)
 │   ├── Cargo.toml              # socsim git deps: core / engine / net / llm (features=["live"])
 │   ├── src/
-│   │   ├── main.rs             # clap: run / sweep
-│   │   ├── config.rs           # Config + enums (Topology / ConfirmationBias / Framing / MemoryMode / LlmSettings)
-│   │   ├── world.rs            # OpinionWorld (WorldState) + AgentState (opinion / memory / trajectory)
+│   │   ├── main.rs             # clap: run / sweep / reproduce
+│   │   ├── config.rs           # Config + enums (Topology / ConfirmationBias / Framing / MemoryMode / LlmSettings) + parse_control
+│   │   ├── world.rs            # OpinionWorld (WorldState) + AgentState (opinion / memory / trajectory) + interact flag
 │   │   ├── llm.rs              # two-layer LLM client builder (Ollama→OpenAI fallback + cache)
+│   │   ├── reproduce_mock.rs   # deterministic scripted client for offline reproduce / run --mock
 │   │   ├── prompts.rs          # speaker / listener / classifier prompts
 │   │   ├── classifier.rs       # f_oc: sentiment → opinion (rule-based → LLM fallback)
 │   │   ├── mechanisms.rs       # LLMOpinionUpdateMechanism (Interaction) + MetricsMechanism (PostStep)
 │   │   ├── metrics.rs          # bias B / diversity D / n_clusters / polarization / convergence_time
-│   │   ├── simulation.rs       # init_world + run driver + output writers
+│   │   ├── simulation.rs       # init_world + run / run_mock drivers + output writers
 │   │   └── lib.rs              # module exports for tests
 │   ├── examples/mock_smoke.rs  # offline (no-network) smoke run for CI / sandboxes
 │   └── tests/integration_test.rs  # mock-driven; needs no live LLM
 ├── tools/                      # Python package `chuang-tools` (module `chuang_tools`)
-│   └── src/chuang_tools/{cli,visualize,visualize_sweep,show_experiment_settings}.py
+│   └── src/chuang_tools/{cli,visualize,visualize_sweep,show_experiment_settings,reproduce_paper}.py
 ├── docs/                       # this documentation (bilingual)
 └── results/                    # runtime output (gitignored)
 ```
@@ -62,11 +63,12 @@ The client and a `MetadataCollector` are shared between the mechanism and the ru
 
 ## WorldState and the mechanism
 
-`OpinionWorld` holds a `socsim_net::SocialNetwork` and a `BTreeMap<AgentId, AgentState>` (sorted keys → deterministic `agent_ids()`). Each `AgentState` carries a persona (text), an opinion `i8 ∈ [−2,2]`, a memory (`Vec<String>`), an opinion trajectory, and the last tweet. `#[derive(Clone)]` supports snapshotting and the (future) non-interacting control condition.
+`OpinionWorld` holds a `socsim_net::SocialNetwork` and a `BTreeMap<AgentId, AgentState>` (sorted keys → deterministic `agent_ids()`). Each `AgentState` carries a persona (text), an opinion `i8 ∈ [−2,2]`, a memory (`Vec<String>`), an opinion trajectory, and the last tweet. An `interact: bool` flag drives the non-interaction control arm. `#[derive(Clone)]` supports snapshotting and the control comparison.
 
 Topology (`socsim-net` generators):
 
 - `full` → complete graph via `erdos_renyi(ids, 1.0, rng)` (the paper's all-to-all setting).
+- `er` → `erdos_renyi(ids, er_p, rng)` (random graph with connection probability `er_p`).
 - `ws` → `watts_strogatz(ids, k, beta, rng)`.
 - `ba` → `barabasi_albert(ids, m, rng)`.
 
@@ -74,7 +76,7 @@ Mechanisms (six-phase loop):
 
 | Mechanism | Phase | Role |
 |---|---|---|
-| `LLMOpinionUpdateMechanism` | `Interaction` | one tick = `events_per_step` dyadic interactions. Sample speaker + listener (from the speaker's neighbours) via `ctx.rng`; speaker tweets (LLM); listener reviews and reports a stance (LLM); `f_oc` numericises it to `i8`; both update memory; the listener's opinion is updated. **All LLM calls live here.** |
+| `LLMOpinionUpdateMechanism` | `Interaction` | one tick = `events_per_step` dyadic interactions. Sample speaker + listener (from the speaker's neighbours) via `ctx.rng`; speaker tweets (LLM); listener reviews and reports a stance (LLM); `f_oc` numericises it to `i8`; both update memory; the listener's opinion is updated. **All LLM calls live here.** Under the `no-interaction` control the mechanism short-circuits (no pairing, no LLM calls), so agents keep their initial opinions and the metrics measure intrinsic drift only. |
 | `MetricsMechanism` | `PostStep` | append each agent's current opinion to its trajectory; compute opinion variance; `request_stop()` when variance `< tol`. |
 
 `Interaction` is chosen because the update is neighbour diffusion (a listener changes after reading a neighbour's tweet) — the LLM analogue of bounded-confidence / DeGroot updating, not an isolated `Decision`.
@@ -90,7 +92,7 @@ Computed every step over the opinion vector `F_o^t` (see `metrics.rs`):
 - **polarization** — mean `|opinion|` normalised by the opinion radius (2), in `[0,1]`.
 - **convergence_time** — first step at which variance `< tol` (computed in the sweep summary).
 
-`framing_asymmetry` (sign difference of `B` between true/false framing) is a cross-condition metric, deferred to Phase 3 (`reproduce`).
+The `reproduce` subcommand aggregates these per-step metrics across conditions (bias × control, and the topology comparison) into `reproduce_summary.json`, evaluating the paper's headline anchors (consensus drift, monotone `D` increase with bias, interaction-driven consensus). For offline runs the `reproduce_mock` module supplies a deterministic scripted client whose listener reply drifts toward the framing's truthful pole under no/weak bias and holds its stance under strong bias — structurally reproducing the consensus→fragmentation transition without a live LLM.
 
 ## socsim framework
 

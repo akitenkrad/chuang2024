@@ -11,20 +11,21 @@ chuang2024/
 ├── simulation/                 # Rust クレート `chuang-opinion-simulation` (bin `chuang`)
 │   ├── Cargo.toml              # socsim git 依存: core / engine / net / llm (features=["live"])
 │   ├── src/
-│   │   ├── main.rs             # clap: run / sweep
-│   │   ├── config.rs           # Config + 列挙型 (Topology / ConfirmationBias / Framing / MemoryMode / LlmSettings)
-│   │   ├── world.rs            # OpinionWorld (WorldState) + AgentState (opinion / memory / trajectory)
+│   │   ├── main.rs             # clap: run / sweep / reproduce
+│   │   ├── config.rs           # Config + 列挙型 (Topology / ConfirmationBias / Framing / MemoryMode / LlmSettings) + parse_control
+│   │   ├── world.rs            # OpinionWorld (WorldState) + AgentState (opinion / memory / trajectory) + interact フラグ
 │   │   ├── llm.rs              # 二層 LLM クライアントビルダ (Ollama→OpenAI フォールバック + キャッシュ)
+│   │   ├── reproduce_mock.rs   # オフライン reproduce / run --mock 用の決定論的 scripted クライアント
 │   │   ├── prompts.rs          # 話者 / 聴者 / 分類器プロンプト
 │   │   ├── classifier.rs       # f_oc: 所感 → 意見 (規則ベース → LLM フォールバック)
 │   │   ├── mechanisms.rs       # LLMOpinionUpdateMechanism (Interaction) + MetricsMechanism (PostStep)
 │   │   ├── metrics.rs          # bias B / diversity D / n_clusters / polarization / convergence_time
-│   │   ├── simulation.rs       # init_world + run ドライバ + 出力ライタ
+│   │   ├── simulation.rs       # init_world + run / run_mock ドライバ + 出力ライタ
 │   │   └── lib.rs              # テスト用モジュール公開
 │   ├── examples/mock_smoke.rs  # オフライン (ネットワーク不要) スモーク実行 (CI / サンドボックス用)
 │   └── tests/integration_test.rs  # mock 駆動; ライブ LLM 不要
 ├── tools/                      # Python パッケージ `chuang-tools` (module `chuang_tools`)
-│   └── src/chuang_tools/{cli,visualize,visualize_sweep,show_experiment_settings}.py
+│   └── src/chuang_tools/{cli,visualize,visualize_sweep,show_experiment_settings,reproduce_paper}.py
 ├── docs/                       # 本ドキュメント (バイリンガル)
 └── results/                    # 実行時生成 (gitignore 対象)
 ```
@@ -62,11 +63,12 @@ CachingClient< Box<dyn LlmClient> >   // 型消去: 本番 FallbackClient< Ollam
 
 ## WorldState とメカニズム
 
-`OpinionWorld` は `socsim_net::SocialNetwork` と `BTreeMap<AgentId, AgentState>` (ソート済みキー → 決定論的 `agent_ids()`) を持つ．各 `AgentState` はペルソナ (テキスト)・意見 `i8 ∈ [−2,2]`・メモリ (`Vec<String>`)・意見軌跡・最終ツイートを持つ．`#[derive(Clone)]` でスナップショットと (将来の) 非相互作用統制条件に対応する．
+`OpinionWorld` は `socsim_net::SocialNetwork` と `BTreeMap<AgentId, AgentState>` (ソート済みキー → 決定論的 `agent_ids()`) を持つ．各 `AgentState` はペルソナ (テキスト)・意見 `i8 ∈ [−2,2]`・メモリ (`Vec<String>`)・意見軌跡・最終ツイートを持つ．`interact: bool` フラグが非相互作用統制アームを駆動する．`#[derive(Clone)]` でスナップショットと統制比較に対応する．
 
 トポロジ (`socsim-net` 生成器):
 
 - `full` → `erdos_renyi(ids, 1.0, rng)` の完全グラフ (論文の全結合設定)．
+- `er` → `erdos_renyi(ids, er_p, rng)` (結合確率 `er_p` のランダムグラフ)．
 - `ws` → `watts_strogatz(ids, k, beta, rng)`．
 - `ba` → `barabasi_albert(ids, m, rng)`．
 
@@ -74,7 +76,7 @@ CachingClient< Box<dyn LlmClient> >   // 型消去: 本番 FallbackClient< Ollam
 
 | メカニズム | フェーズ | 役割 |
 |---|---|---|
-| `LLMOpinionUpdateMechanism` | `Interaction` | 1 tick = `events_per_step` 回の dyadic interaction．`ctx.rng` で話者 + 聴者 (話者近傍から) を抽選し，話者がツイート (LLM) → 聴者が所感報告 (LLM) → `f_oc` で `i8` へ数値化 → 双方メモリ更新 → 聴者意見を更新．**LLM 呼び出しはすべてここに閉じる．** |
+| `LLMOpinionUpdateMechanism` | `Interaction` | 1 tick = `events_per_step` 回の dyadic interaction．`ctx.rng` で話者 + 聴者 (話者近傍から) を抽選し，話者がツイート (LLM) → 聴者が所感報告 (LLM) → `f_oc` で `i8` へ数値化 → 双方メモリ更新 → 聴者意見を更新．**LLM 呼び出しはすべてここに閉じる．** `no-interaction` 統制ではメカニズムが短絡し (ペアリング無し・LLM 呼び出し無し)，エージェントは初期意見を保持してメトリクスは固有ドリフトのみを測る． |
 | `MetricsMechanism` | `PostStep` | 各エージェントの軌跡へ現在意見を追記; 意見分散を計算; 分散 `< tol` で `request_stop()`． |
 
 `Interaction` を選ぶのは，更新が近傍拡散 (聴者が近傍のツイートを読んで変化する) であり，孤立した `Decision` ではなく有界信頼 / DeGroot 更新の LLM 類似物だからである．
@@ -90,7 +92,7 @@ CachingClient< Box<dyn LlmClient> >   // 型消去: 本番 FallbackClient< Ollam
 - **polarization** — 意見半径 (2) で正規化した `|opinion|` の平均，∈ `[0,1]`．
 - **convergence_time** — 分散 `< tol` となる最初のステップ (sweep サマリで計算)．
 
-`framing_asymmetry` (true/false フレーミング間の `B` の符号差) は条件間比較なので Phase 3 (`reproduce`) に委ねる．
+`reproduce` サブコマンドはこれらのステップ別メトリクスを条件横断 (bias × control，および topology 比較) で集計し `reproduce_summary.json` に書き出し，論文の見出しアンカー (合意ドリフト，バイアスによる `D` 単調増大，相互作用駆動の合意) を評価する．オフライン実行では `reproduce_mock` モジュールが決定論的 scripted クライアントを供給し，聴者応答が無/弱バイアスでフレーミングの真値極へドリフトし強バイアスでスタンスを保持する — ライブ LLM 無しで合意→断片化の遷移を構造的に再現する．
 
 ## socsim 基盤
 

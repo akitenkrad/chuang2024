@@ -30,6 +30,25 @@ uv run chuang-tools visualize-sweep --sweep_dir results/20260524_160000_sweep
 
 コンソールにも確証バイアス別の平均 Diversity `D̄` を表示する．
 
+## `reproduce` — 論文の見出し的知見 + 図
+
+```bash
+# オフライン (LLM 不要): Rust reproduce を mock で実行してから図を描く
+uv run chuang-tools reproduce --run --mock
+uv run chuang-tools reproduce --run --mock --quick   # 高速スモーク
+# 既存の reproduce ディレクトリを可視化
+uv run chuang-tools reproduce --results-dir results/reproduce_20260530_000000
+uv run chuang-tools reproduce --json                 # サマリを JSON 出力
+```
+
+Rust `reproduce` が書き出す `reproduce_summary.json` (と条件別 `metrics_{condition}.csv`) を読み，観測 vs 論文のアンカー表を表示しつつ `{results_dir}/figures/` へ出力する:
+
+- `bias_control_matrix.png` — 確証バイアス `none / weak / strong` 上の最終 **Diversity D** と **Bias B** をグループ棒グラフで，`interaction` / `no-interaction` アームを並置．見出し的結果 (無バイアス→低 D 合意 / 強バイアス→高 D 断片化) と統制アーム (相互作用を外すと合意しない) を示す．
+- `topology_comparison.png` — `full / er / ws / ba` の最終 **Diversity D** と **収束ステップ** (bias `none`, interaction)．
+- `control_contrast.png` — 代表 run の **Diversity D** 時系列を，`none` / `strong` バイアスについて `interaction` vs `no-interaction` で重ね描き — 社会的影響 vs 固有ドリフトの時系列対比．
+
+`--run` で新規結果を先に生成する (CI・サンドボックスでは `--mock` を併用しライブ LLM を回避)．省略すると既存ディレクトリを可視化する．
+
 ## `show-experiment-settings` — 設定と LLM メタデータ
 
 ```bash
@@ -44,7 +63,8 @@ run/sweep 設定 (`config.json` / `sweep_config.json`) と，存在すれば `ru
 
 - **真実収束 (バイアスなし).** 分散と多様性が減衰し，Bias `B` が真実極へドリフトする (`true` フレーミングで正，`false` フレーミングで負)．
 - **分断 (強バイアス).** 分散と多様性が高止まりし，`n_clusters` > 1 となる．多様性ヒートマップは `strong` 行が最も明るい．
-- **トポロジ効果 (拡張).** 疎・不均一なトポロジ (`ws` / `ba`) は全結合 `full` より収束が遅くクラスタが残りやすい．
+- **非相互作用統制.** `--control no-interaction` ではエージェントが近傍を見ないため意見が初期分布近くに留まり，多様性は縮小しない．相互作用アームと比べることで「網による意見変化」と「LLM 自身の prior によるドリフト」を分離できる．
+- **トポロジ効果.** 疎・不均一なトポロジ (`er` / `ws` / `ba`) は全結合 `full` より収束が遅くクラスタが残りやすい．
 
 絶対値は使用 LLM に依存する (ローカル `llama3.2` ≠ 論文の `gpt-3.5-turbo`) ため，厳密値ではなく符号と傾向を比較する．
 

@@ -50,7 +50,14 @@ uv run chuang-tools show-experiment-settings --results-dir results/latest
 
 ## Scope
 
-This repository currently implements **Phase 1** (the core dyadic LLM opinion-update model on a network, the two-layer LLM client with Ollama→OpenAI fallback + caching, the `run` subcommand, and opinion-convergence metrics) and **Phase 2** (the `sweep` over confirmation-bias × framing × topology, plus the Python `visualize` / `visualize-sweep` / `show-experiment-settings` tools). The non-interacting control condition, extreme-initial-opinion robustness, deeper network-topology analysis, and a one-shot paper reproduction (`reproduce`, Table 1 / Fig. 4–6) are left as future work (Phase 3); clean extension points are kept throughout.
+This repository implements the core dyadic LLM opinion-update model on a network, the two-layer LLM client (Ollama→OpenAI fallback + caching), and opinion-convergence metrics, exposed through three Rust subcommands and a Python tool suite:
+
+- `run` — a single configuration, with a `--control no-interaction` arm (agents evolve in isolation, never seeing neighbours) and an offline `--mock` mode.
+- `sweep` — a grid over confirmation-bias × framing × topology (`full` / `er` / `ws` / `ba`).
+- `reproduce` — a one-command reproduction of the paper's headline findings: the bias × control matrix (no bias → truthful consensus; strong bias → fragmentation; the non-interaction control isolating social influence from the LLM's intrinsic drift) and a topology comparison, with observed-vs-paper anchors written to `reproduce_summary.json`.
+- Python `chuang-tools`: `visualize` / `visualize-sweep` / `show-experiment-settings` / `reproduce` (renders the reproduction figures).
+
+The opinion classifier supports a `reflective` memory mode label; the current update path uses the `cumulative` memory documented above. Reflective-memory summarisation is a clean extension point.
 
 ## License
 

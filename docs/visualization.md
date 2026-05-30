@@ -30,6 +30,25 @@ Reads `sweep_summary.csv` from `--sweep_dir` and writes to `{sweep_dir}/figures/
 
 The console also prints the per-bias mean diversity `D̄`.
 
+## `reproduce` — the paper's headline findings + figures
+
+```bash
+# Offline (no LLM): run the Rust reproduce with the mock, then draw the figures
+uv run chuang-tools reproduce --run --mock
+uv run chuang-tools reproduce --run --mock --quick   # fast smoke
+# Visualize an existing reproduce directory
+uv run chuang-tools reproduce --results-dir results/reproduce_20260530_000000
+uv run chuang-tools reproduce --json                 # print the summary as JSON
+```
+
+Reads `reproduce_summary.json` (and the per-condition `metrics_{condition}.csv`) written by the Rust `reproduce` subcommand, prints the observed-vs-paper anchor table, and writes to `{results_dir}/figures/`:
+
+- `bias_control_matrix.png` — final **Diversity D** and **Bias B** as grouped bars over confirmation bias `none / weak / strong`, with the `interaction` and `no-interaction` arms side by side. Shows the headline result (no bias → low D consensus; strong bias → high D fragmentation) and the control arm (no consensus when interaction is removed).
+- `topology_comparison.png` — final **Diversity D** and **convergence step** across `full / er / ws / ba` (bias `none`, interaction).
+- `control_contrast.png` — the **Diversity D** time series of the representative run, overlaying `interaction` vs `no-interaction` for the `none` and `strong` bias levels — the social-influence-vs-intrinsic-drift contrast over time.
+
+Add `--run` to generate fresh results first (with `--mock` in CI/sandboxes to avoid live LLM); omit it to visualize an existing directory.
+
 ## `show-experiment-settings` — settings & LLM metadata
 
 ```bash
@@ -44,7 +63,8 @@ Renders the run/sweep configuration (`config.json` or `sweep_config.json`) and, 
 
 - **Truthful consensus (no bias).** Variance and diversity decay; bias `B` drifts toward the truthful pole (positive under `true` framing, negative under `false` framing).
 - **Fragmentation (strong bias).** Variance and diversity stay high; `n_clusters` > 1; the diversity heatmap is brightest in the `strong` row.
-- **Topology effect (extension).** Sparse/heterogeneous topologies (`ws` / `ba`) tend to converge more slowly and retain more clusters than the all-to-all `full` graph.
+- **Non-interaction control.** With `--control no-interaction` the agents never see neighbours, so opinions stay near their initial spread — diversity does not collapse. Comparing it against the interaction arm separates "opinions change because of the network" from "opinions drift because of the LLM's own prior".
+- **Topology effect.** Sparse/heterogeneous topologies (`er` / `ws` / `ba`) tend to converge more slowly and retain more clusters than the all-to-all `full` graph.
 
 Note that absolute numbers depend on the LLM used (local `llama3.2` ≠ the paper's `gpt-3.5-turbo`); compare signs and trends, not exact values.
 

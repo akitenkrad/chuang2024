@@ -1,11 +1,13 @@
 //! Chuang et al. (2024) "Simulating Opinion Dynamics with Networks of LLM-based
 //! Agents" — 再現実験の CLI エントリポイント．
 //!
-//! `run`   : 単一設定で dyadic LLM 意見力学を実行する．
-//! `sweep` : 確証バイアス × フレーミング × トポロジ (× メモリ方式) を走査し，
-//!           最終 B / D / 分極などを `sweep_summary.csv` に集計する．
-//!
-//! Phase 3 の `reproduce` (Table 1 / Fig.4-6 一括再現) は未実装 (拡張点)．
+//! `run`       : 単一設定で dyadic LLM 意見力学を実行する (`--control no-interaction`
+//!               で非相互作用統制条件，`--mock` でオフライン scripted 駆動)．
+//! `sweep`     : 確証バイアス × フレーミング × トポロジ (× メモリ方式) を走査し，
+//!               最終 B / D / 分極などを `sweep_summary.csv` に集計する．
+//! `reproduce` : 論文 4.3 の見出し的知見 (確証バイアスによる合意→断片化の遷移，
+//!               非相互作用統制との対比，トポロジ間の収束比較) を一括再現し
+//!               `reproduce_summary.json` に観測 vs 論文の PASS/off を記録する．
 
 use std::fs;
 use std::path::Path;
@@ -14,12 +16,13 @@ use clap::{Parser, Subcommand};
 use socsim_results::{refresh_latest_symlink, timestamp, write_csv, write_json};
 
 use chuang_opinion_simulation::config::{
-    parse_bias, parse_framing, parse_memory, parse_topology, Config, ConfirmationBias, Framing,
-    LlmSettings, MemoryMode, Topology,
+    parse_bias, parse_control, parse_framing, parse_memory, parse_topology, Config,
+    ConfirmationBias, Framing, LlmSettings, MemoryMode, Topology,
 };
 use chuang_opinion_simulation::metrics::convergence_time;
 use chuang_opinion_simulation::simulation::{
-    ensure_output_dir, run, save_metrics, save_opinions, save_run_metadata,
+    ensure_output_dir, run, run_mock, save_metrics, save_opinions, save_run_metadata,
+    SimulationResult,
 };
 
 // ---------------------------------------------------------------------------
@@ -42,6 +45,8 @@ enum Commands {
     Run(RunArgs),
     /// 確証バイアス × フレーミング × トポロジを走査し，最終 B/D を集計する．
     Sweep(SweepArgs),
+    /// 論文 4.3 の見出し的知見を一括再現し reproduce_summary.json に集計する．
+    Reproduce(ReproduceArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -66,7 +71,17 @@ struct RunArgs {
     #[arg(long, default_value = "cumulative")]
     memory: String,
 
-    /// トポロジ (full / ws / ba)．
+    /// 統制条件 (interaction = 通常 / no-interaction = 近傍を見ない単独進化)．
+    /// 非相互作用統制は «網による意見変化» と «LLM 自身の prior によるドリフト»
+    /// を分離する鍵となる ablation．
+    #[arg(long, default_value = "interaction")]
+    control: String,
+
+    /// LLM を呼ばず決定論的 scripted mock で駆動する (オフライン検証用)．
+    #[arg(long, default_value_t = false)]
+    mock: bool,
+
+    /// トポロジ (full / ws / ba / er)．
     #[arg(long, default_value = "full")]
     topology: String,
 
@@ -178,6 +193,66 @@ struct SweepArgs {
     output_dir: String,
 }
 
+#[derive(Parser, Debug)]
+struct ReproduceArgs {
+    /// エージェント数 N．
+    #[arg(long, default_value_t = 12)]
+    n_agents: usize,
+
+    /// 議論トピック (false framing で flat_earth = «地球平面説は偽»)．
+    #[arg(long, default_value = "flat_earth")]
+    topic: String,
+
+    /// フレーミング (true / false)．
+    #[arg(long, default_value = "false")]
+    framing: String,
+
+    /// 各条件あたりの独立試行数．
+    #[arg(long, default_value_t = 5)]
+    runs: usize,
+
+    /// 1 ステップあたりの dyadic interaction 数．
+    #[arg(long, default_value_t = 2)]
+    events_per_step: usize,
+
+    /// 最大ステップ数 T．
+    #[arg(long, default_value_t = 40)]
+    max_steps: usize,
+
+    /// トポロジ比較に用いるトポロジリスト (カンマ区切り)．
+    #[arg(long, default_value = "full,er,ws,ba")]
+    topology_values: String,
+
+    /// 乱数シード基点 (各条件・試行は derive により独立化する)．
+    #[arg(long, default_value_t = 42)]
+    seed: u64,
+
+    /// LLM を呼ばず決定論的 scripted mock で駆動する (オフライン検証用)．
+    /// サンドボックス・CI では `--mock` を付ける (ライブ LLM 不要)．
+    #[arg(long, default_value_t = false)]
+    mock: bool,
+
+    /// LLM 生成温度 (live 時のみ)．
+    #[arg(long, default_value_t = 0.0)]
+    temperature: f32,
+
+    /// LLM 生成シード (live 時のみ)．
+    #[arg(long, default_value_t = 0)]
+    llm_seed: u64,
+
+    /// プロンプト→応答キャッシュの保存先 (live 時のみ; 全条件で共有)．
+    #[arg(long, default_value = ".llm_cache/cache.json")]
+    cache_path: String,
+
+    /// 軽量モード (N と runs と max_steps を縮小; 動作確認用)．
+    #[arg(long, default_value_t = false)]
+    quick: bool,
+
+    /// 結果出力ベースディレクトリ．
+    #[arg(long, default_value = "results")]
+    output_dir: String,
+}
+
 // ---------------------------------------------------------------------------
 // 補助
 // ---------------------------------------------------------------------------
@@ -248,6 +323,7 @@ fn cmd_run(args: RunArgs) {
     let bias = parse_bias(&args.bias).unwrap_or_else(|e| panic!("{}", e));
     let memory_mode = parse_memory(&args.memory).unwrap_or_else(|e| panic!("{}", e));
     let topology = parse_topology(&args.topology).unwrap_or_else(|e| panic!("{}", e));
+    let interact = parse_control(&args.control).unwrap_or_else(|e| panic!("{}", e));
 
     let timestamp = timestamp();
     let output_dir = format!("{}/{}", args.output_dir, timestamp);
@@ -258,8 +334,9 @@ fn cmd_run(args: RunArgs) {
         framing,
         bias,
         memory_mode,
-        interact: true,
+        interact,
         topology,
+        er_p: 0.3,
         ws_k: args.ws_k,
         ws_beta: args.ws_beta,
         ba_m: args.ba_m,
@@ -283,13 +360,19 @@ fn cmd_run(args: RunArgs) {
 
     println!("=== Chuang et al. (2024) LLM 意見力学 再現実験 ===");
     println!(
-        "N: {} | topic: {} | framing: {} | bias: {} | memory: {} | topology: {}",
+        "N: {} | topic: {} | framing: {} | bias: {} | memory: {} | topology: {} | control: {}{}",
         cfg.n_agents,
         cfg.topic,
         cfg.framing.label(),
         cfg.bias.label(),
         cfg.memory_mode.label(),
         cfg.topology.label(),
+        if cfg.interact {
+            "interaction"
+        } else {
+            "no-interaction"
+        },
+        if args.mock { " | MOCK" } else { "" },
     );
     println!(
         "events/step: {} | max_steps: {} | tol: {} | seed: {:?}",
@@ -302,7 +385,11 @@ fn cmd_run(args: RunArgs) {
     println!("出力先: {}", cfg.output_dir);
     println!("-------------------------------------------------");
 
-    let result = run(&cfg).unwrap_or_else(|e| panic!("実行に失敗: {}", e));
+    let result = if args.mock {
+        run_mock(&cfg).unwrap_or_else(|e| panic!("mock 実行に失敗: {}", e))
+    } else {
+        run(&cfg).unwrap_or_else(|e| panic!("実行に失敗: {}", e))
+    };
 
     save_metrics(&result.metrics_history, &cfg.output_dir);
     save_opinions(&result, &cfg.output_dir);
@@ -407,6 +494,7 @@ fn cmd_sweep(args: SweepArgs) {
                         memory_mode,
                         interact: true,
                         topology,
+                        er_p: 0.3,
                         ws_k: 4,
                         ws_beta: 0.1,
                         ba_m: 2,
@@ -521,6 +609,372 @@ fn cmd_sweep(args: SweepArgs) {
 }
 
 // ---------------------------------------------------------------------------
+// reproduce
+// ---------------------------------------------------------------------------
+
+/// 1 条件 (bias × control × topology) を `runs` 回回した集計セル．
+#[derive(serde::Serialize, Clone)]
+struct ReproCell {
+    /// 条件ラベル (summary/CSV のキー)．
+    label: String,
+    bias: String,
+    control: String,
+    topology: String,
+    runs: usize,
+    /// 試行平均の最終 Bias B (意見平均)．
+    mean_final_bias: f64,
+    /// 試行平均の最終 Diversity D (意見分布の標準偏差)．
+    mean_final_diversity: f64,
+    /// 試行平均の最終クラスタ数．
+    mean_final_clusters: f64,
+    /// 試行平均の «D の縮小幅» (初期 D − 最終 D; 正なら合意方向)．
+    mean_diversity_drop: f64,
+    /// 試行平均の収束ステップ (収束しなければ max_steps)．
+    mean_final_step: f64,
+}
+
+/// 1 条件を `runs` 回実行して集計セルを作る．
+#[allow(clippy::too_many_arguments)]
+fn run_repro_cell(
+    label: &str,
+    bias: ConfirmationBias,
+    interact: bool,
+    topology: Topology,
+    base: &Config,
+    runs: usize,
+    root_seed: u64,
+    mock: bool,
+    out_dir: &str,
+) -> ReproCell {
+    let mut final_bias = 0.0;
+    let mut final_div = 0.0;
+    let mut final_clusters = 0.0;
+    let mut div_drop = 0.0;
+    let mut final_step = 0.0;
+    // 代表 (run 0) のメトリクス履歴を CSV に保存し，Python 側で時系列描画に使う．
+    let mut representative: Option<Vec<chuang_opinion_simulation::metrics::Metrics>> = None;
+
+    for run_idx in 0..runs {
+        let seed = socsim_core::derive_seed(
+            root_seed,
+            &[
+                label_hash(bias.label()),
+                if interact { 1 } else { 0 },
+                label_hash(topology.label()),
+                run_idx as u64,
+            ],
+        );
+        let cfg = Config {
+            bias,
+            interact,
+            topology,
+            seed: Some(seed),
+            ..base.clone()
+        };
+        let result: SimulationResult = if mock {
+            run_mock(&cfg).unwrap_or_else(|e| panic!("mock 実行に失敗 ({label}): {e}"))
+        } else {
+            run(&cfg).unwrap_or_else(|e| panic!("実行に失敗 ({label}): {e}"))
+        };
+        let first = result.metrics_history.first().unwrap();
+        let last = result.metrics_history.last().unwrap();
+        final_bias += last.bias;
+        final_div += last.diversity;
+        final_clusters += last.n_clusters as f64;
+        div_drop += first.diversity - last.diversity;
+        final_step += result.final_step as f64;
+        if run_idx == 0 {
+            representative = Some(result.metrics_history.clone());
+        }
+    }
+
+    let n = runs.max(1) as f64;
+    if let Some(hist) = representative {
+        let path = format!("{out_dir}/metrics_{label}.csv");
+        socsim_results::write_csv(&hist, &path).expect("metrics_<label>.csv の書き込みに失敗");
+    }
+
+    ReproCell {
+        label: label.to_string(),
+        bias: bias.label().to_string(),
+        control: if interact {
+            "interaction".to_string()
+        } else {
+            "no-interaction".to_string()
+        },
+        topology: topology.label().to_string(),
+        runs,
+        mean_final_bias: final_bias / n,
+        mean_final_diversity: final_div / n,
+        mean_final_clusters: final_clusters / n,
+        mean_diversity_drop: div_drop / n,
+        mean_final_step: final_step / n,
+    }
+}
+
+/// 観測値と論文の定性的知見を突き合わせた 1 アンカー．
+#[derive(serde::Serialize)]
+struct ReproAnchor {
+    name: String,
+    paper: String,
+    observed: f64,
+    target_lo: f64,
+    target_hi: f64,
+    pass: bool,
+}
+
+fn cmd_reproduce(args: ReproduceArgs) {
+    let framing = parse_framing(&args.framing).unwrap_or_else(|e| panic!("{}", e));
+    let topologies: Vec<Topology> = split_csv(&args.topology_values)
+        .iter()
+        .map(|s| parse_topology(s).unwrap_or_else(|e| panic!("{}", e)))
+        .collect();
+
+    // quick モードは軽量化 (動作確認用; 論文値検証には使わない)．
+    let n_agents = if args.quick { 8 } else { args.n_agents };
+    let runs = if args.quick { 2 } else { args.runs };
+    let max_steps = if args.quick { 20 } else { args.max_steps };
+
+    let ts = timestamp();
+    let out_dir = format!("{}/reproduce_{}", args.output_dir, ts);
+    ensure_output_dir(&out_dir);
+    if !args.mock {
+        if let Some(parent) = Path::new(&args.cache_path).parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+    }
+
+    // 基準設定 (全条件で共通; bias/interact/topology/seed のみ条件ごとに差替)．
+    let base = Config {
+        n_agents,
+        topic: args.topic.clone(),
+        framing,
+        bias: ConfirmationBias::None,
+        memory_mode: MemoryMode::Cumulative,
+        interact: true,
+        topology: Topology::Full,
+        er_p: 0.3,
+        ws_k: 4,
+        ws_beta: 0.1,
+        ba_m: 2,
+        events_per_step: args.events_per_step,
+        max_steps,
+        // 収束で早期停止しないよう厳しめ (各条件を同じ T まで回して比較する)．
+        tol: 1e-12,
+        seed: Some(args.seed),
+        llm: LlmSettings {
+            temperature: args.temperature,
+            seed: args.llm_seed,
+            cache_path: if args.mock {
+                None
+            } else {
+                Some(args.cache_path.clone())
+            },
+        },
+        output_dir: out_dir.clone(),
+    };
+
+    println!("=== Chuang et al. (2024) 見出し的知見 一括再現 ===");
+    println!(
+        "N: {} | topic: {} | framing: {} | runs: {} | T: {} | mode: {}",
+        n_agents,
+        args.topic,
+        framing.label(),
+        runs,
+        max_steps,
+        if args.mock { "MOCK" } else { "LIVE" },
+    );
+    println!("出力先: {out_dir}");
+    println!("-------------------------------------------------");
+
+    // --- (1) bias × control 行列 (full topology) ---
+    // 論文 4.3: バイアス無し→真値方向の合意 / バイアス強→断片化．non-interaction
+    // 統制は «社会的影響» を切り，LLM 自身の prior ドリフトを分離する．
+    let biases = [
+        ConfirmationBias::None,
+        ConfirmationBias::Weak,
+        ConfirmationBias::Strong,
+    ];
+    let mut bias_cells: Vec<ReproCell> = Vec::new();
+    for &b in &biases {
+        for &interact in &[true, false] {
+            let arm = if interact { "interact" } else { "control" };
+            let label = format!("bias-{}_{}", b.label(), arm);
+            let cell = run_repro_cell(
+                &label,
+                b,
+                interact,
+                Topology::Full,
+                &base,
+                runs,
+                args.seed,
+                args.mock,
+                &out_dir,
+            );
+            bias_cells.push(cell);
+        }
+    }
+
+    // --- (2) topology 比較 (bias=none, interaction) ---
+    let mut topo_cells: Vec<ReproCell> = Vec::new();
+    for &topo in &topologies {
+        let label = format!("topo-{}", topo.label());
+        let cell = run_repro_cell(
+            &label,
+            ConfirmationBias::None,
+            true,
+            topo,
+            &base,
+            runs,
+            args.seed,
+            args.mock,
+            &out_dir,
+        );
+        topo_cells.push(cell);
+    }
+
+    // --- アンカー評価 (論文の定性的知見) ---
+    let cell = |cells: &[ReproCell], label: &str| -> ReproCell {
+        cells
+            .iter()
+            .find(|c| c.label == label)
+            .cloned()
+            .unwrap_or_else(|| panic!("セル {label} が見つかりません"))
+    };
+    let none_i = cell(&bias_cells, "bias-none_interact");
+    let weak_i = cell(&bias_cells, "bias-weak_interact");
+    let strong_i = cell(&bias_cells, "bias-strong_interact");
+    let none_c = cell(&bias_cells, "bias-none_control");
+    let strong_c = cell(&bias_cells, "bias-strong_control");
+
+    let mut anchors: Vec<ReproAnchor> = Vec::new();
+    let mut push = |name: &str, paper: &str, obs: f64, lo: f64, hi: f64| {
+        anchors.push(ReproAnchor {
+            name: name.to_string(),
+            paper: paper.to_string(),
+            observed: obs,
+            target_lo: lo,
+            target_hi: hi,
+            pass: obs >= lo && obs <= hi,
+        });
+    };
+
+    // H1: バイアス無しの相互作用は合意へ向かう (D が縮小; drop>0)．
+    push(
+        "consensus_drift_no_bias (D drop > 0)",
+        "consensus",
+        none_i.mean_diversity_drop,
+        0.0,
+        f64::INFINITY,
+    );
+    // H2: 確証バイアスで Diversity D が単調増大 (none ≤ weak ≤ strong)．
+    push(
+        "diversity_monotone_weak>=none",
+        "D(weak)>=D(none)",
+        weak_i.mean_final_diversity - none_i.mean_final_diversity,
+        -1e-9,
+        f64::INFINITY,
+    );
+    push(
+        "diversity_monotone_strong>=weak",
+        "D(strong)>=D(weak)",
+        strong_i.mean_final_diversity - weak_i.mean_final_diversity,
+        -1e-9,
+        f64::INFINITY,
+    );
+    // H3 (Wave3): 非相互作用統制では強バイアス下で合意が起きない (D が温存)．
+    //   interaction(none) は合意 (低 D)，control(strong) は高 D を保つ → 差 > 0．
+    push(
+        "interaction_drives_consensus (D_control(strong) - D_interact(none) > 0)",
+        "social influence matters",
+        strong_c.mean_final_diversity - none_i.mean_final_diversity,
+        0.0,
+        f64::INFINITY,
+    );
+    // H3b: 非相互作用統制の «固有ドリフト» は相互作用より小さい (社会的影響の寄与)．
+    //   D drop: interaction(none) ≥ control(none)．
+    push(
+        "social_amplifies_drift (drop_interact(none) - drop_control(none) >= 0)",
+        "interaction >= isolation",
+        none_i.mean_diversity_drop - none_c.mean_diversity_drop,
+        -1e-9,
+        f64::INFINITY,
+    );
+
+    // --- コンソール出力 ---
+    println!("--- bias × control 行列 (full topology) ---");
+    println!(
+        "{:<24} {:>8} {:>8} {:>8} {:>10}",
+        "condition", "B̄", "D̄", "clust", "D-drop"
+    );
+    for c in &bias_cells {
+        println!(
+            "{:<24} {:>8.3} {:>8.3} {:>8.2} {:>10.3}",
+            c.label,
+            c.mean_final_bias,
+            c.mean_final_diversity,
+            c.mean_final_clusters,
+            c.mean_diversity_drop,
+        );
+    }
+    println!("--- topology 比較 (bias=none, interaction) ---");
+    for c in &topo_cells {
+        println!(
+            "{:<24} {:>8.3} {:>8.3} {:>8.2} {:>10.3}",
+            c.label,
+            c.mean_final_bias,
+            c.mean_final_diversity,
+            c.mean_final_clusters,
+            c.mean_diversity_drop,
+        );
+    }
+    println!("--- 論文知見アンカー ---");
+    for a in &anchors {
+        let hi = if a.target_hi.is_infinite() {
+            "∞".to_string()
+        } else {
+            format!("{:.3}", a.target_hi)
+        };
+        println!(
+            "[{}] {:<52} obs={:.4} target=[{:.3},{}]",
+            if a.pass { "PASS" } else { "OFF " },
+            a.name,
+            a.observed,
+            a.target_lo,
+            hi,
+        );
+    }
+    let n_pass = anchors.iter().filter(|a| a.pass).count();
+    println!("-------------------------------------------------");
+    println!("{}/{} アンカーが in-band", n_pass, anchors.len());
+
+    // --- reproduce_summary.json ---
+    let summary = serde_json::json!({
+        "timestamp": ts,
+        "mode": if args.mock { "mock" } else { "live" },
+        "config": {
+            "n_agents": n_agents,
+            "topic": args.topic,
+            "framing": framing.label(),
+            "runs": runs,
+            "events_per_step": args.events_per_step,
+            "max_steps": max_steps,
+            "seed": args.seed,
+        },
+        "bias_control_matrix": bias_cells,
+        "topology_comparison": topo_cells,
+        "anchors": anchors,
+        "n_pass": n_pass,
+        "n_total": anchors.len(),
+    });
+    let path = format!("{out_dir}/reproduce_summary.json");
+    write_json(&summary, &path).expect("reproduce_summary.json の書き込みに失敗");
+    let _ = refresh_latest_symlink(&args.output_dir, &format!("reproduce_{ts}"));
+    println!("サマリ → {path}");
+    println!("条件別メトリクス → {out_dir}/metrics_<condition>.csv");
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -529,5 +983,6 @@ fn main() {
     match cli.command {
         Commands::Run(args) => cmd_run(args),
         Commands::Sweep(args) => cmd_sweep(args),
+        Commands::Reproduce(args) => cmd_reproduce(args),
     }
 }

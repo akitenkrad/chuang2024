@@ -50,7 +50,14 @@ uv run chuang-tools show-experiment-settings --results-dir results/latest
 
 ## スコープ
 
-本リポジトリは現在 **Phase 1** (ネットワーク上の dyadic LLM 意見更新コアモデル，Ollama→OpenAI フォールバック + キャッシュの二層 LLM クライアント，`run` サブコマンド，意見収束メトリクス) と **Phase 2** (確証バイアス × フレーミング × トポロジの `sweep`，Python `visualize` / `visualize-sweep` / `show-experiment-settings`) を実装する．非相互作用統制条件・極端初期意見の頑健性・ネットワークトポロジの深掘り解析・論文一括再現 (`reproduce`, Table 1 / Fig. 4–6) は将来課題 (Phase 3) とし，拡張点は随所に残している．
+本リポジトリはネットワーク上の dyadic LLM 意見更新コアモデル，二層 LLM クライアント (Ollama→OpenAI フォールバック + キャッシュ)，意見収束メトリクスを実装し，3 つの Rust サブコマンドと Python ツール群として提供する:
+
+- `run` — 単一設定．`--control no-interaction` アーム (近傍を見ず単独進化) とオフライン `--mock` モードを備える．
+- `sweep` — 確証バイアス × フレーミング × トポロジ (`full` / `er` / `ws` / `ba`) の格子走査．
+- `reproduce` — 論文の見出し的知見をワンコマンドで再現: bias × control 行列 (無バイアス→真実合意 / 強バイアス→断片化 / 非相互作用統制が社会的影響と LLM 固有のドリフトを分離) と topology 比較を実行し，観測 vs 論文のアンカーを `reproduce_summary.json` に書き出す．
+- Python `chuang-tools`: `visualize` / `visualize-sweep` / `show-experiment-settings` / `reproduce` (再現図を描く)．
+
+意見分類器は `reflective` メモリ方式ラベルを持つが，現行の更新経路は上述の `cumulative` メモリを用いる．reflective メモリの要約は拡張点として残している．
 
 ## ライセンス
 

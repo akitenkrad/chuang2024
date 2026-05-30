@@ -15,28 +15,50 @@ uv run chuang-tools visualize
 
 各フラグは [CLI](cli.ja.md) を，図は [可視化](visualization.ja.md) を参照．
 
-## 2. 定性的知見を再現する
+## 2. 論文の見出し的知見をワンコマンドで再現する
 
-- **バイアスなしの真実収束.** `--bias none` では意見が収束し Diversity `D` が縮小するはず (`true` フレーミングは正方向，`false` フレーミングは負方向の bias)．
-- **確証バイアス下の分断.** `--bias none → weak → strong` と強めると最終 Diversity `D` が単調増大するはず．sweep を回して確証バイアス別 `D̄` を読む．
+`reproduce` は bias × control 行列と topology 比較を実行し，観測値を論文の定性的主張と突き合わせ，図を描く:
+
+```bash
+# オフライン (LLM 不要): 決定論的 mock で見出し的知見を構造的に再現
+cargo run --release -- reproduce --mock --seed 42
+uv run chuang-tools reproduce --run --mock          # 同上 + 図 + レポート
+```
+
+無バイアスの真実合意 (Diversity `D` が縮小)，確証バイアスによる `D` の単調増大 (`none → weak → strong`)，相互作用を外すと合意しないこと，を確認する．ローカルモデルは論文の `gpt-3.5-turbo` と異なるため，目標は定性的 (`B` の符号，`D` の単調性) とみなす ([README](../README.ja.md) の決定論注記を参照)．
+
+各部品を手で動かすこともできる:
+
+- **バイアスなしの真実収束.** `--bias none` では意見が収束し `D` が縮小する (`true` フレーミングは正，`false` フレーミングは負方向の bias)．
+- **確証バイアス下の分断.** `--bias none → weak → strong` と強めると最終 `D` が単調増大する．sweep を回して確証バイアス別 `D̄` を読む．
 
 ```bash
 cargo run --release -- sweep --bias-values none,weak,strong --framing-values true,false --topology-values full --runs 5 --seed 42
 uv run chuang-tools visualize-sweep
 ```
 
-ローカルモデルは論文の `gpt-3.5-turbo` と異なるため，目標は定性的 (`B` の符号，`D` の単調性) とみなす ([README](../README.ja.md) の決定論注記を参照)．
+## 3. 非相互作用統制で社会的影響を分離する
 
-## 3. ネットワークトポロジ拡張を調べる (論文スコープ外)
-
-論文は全結合グラフを使う．本実装では `ws` (Watts–Strogatz 小世界) や `ba` (Barabási–Albert スケールフリー) に切り替えて収束時間 / クラスタ数を比較できる．
+鍵となる ablation: エージェントに近傍を **見せず** に進化させ，「網による意見変化」と「LLM 自身の prior によるドリフト」を分離する．
 
 ```bash
-cargo run --release -- sweep --topology-values full,ws,ba --bias-values none,strong --framing-values true --runs 5 --seed 42
+# 統制アーム (単独) vs 通常の相互作用アーム — 最終 Diversity D を比較する
+cargo run --release -- run --control no-interaction --bias none --seed 42
+cargo run --release -- run --control interaction    --bias none --seed 42
+```
+
+`reproduce` のサマリと `chuang-tools reproduce` はこの対比を直接示す (`bias_control_matrix` / `control_contrast` 図)．
+
+## 4. ネットワークトポロジ拡張を調べる
+
+論文は全結合グラフを使う．本実装では `er` (Erdős–Rényi)・`ws` (Watts–Strogatz 小世界)・`ba` (Barabási–Albert スケールフリー) に切り替えて収束時間 / クラスタ数を比較できる．
+
+```bash
+cargo run --release -- sweep --topology-values full,er,ws,ba --bias-values none,strong --framing-values true --runs 5 --seed 42
 uv run chuang-tools visualize-sweep
 ```
 
-## 4. プロンプトキャッシュで安価に再現・再実行する
+## 5. プロンプトキャッシュで安価に再実行する
 
 初回実行が `.llm_cache/cache.json` を埋める．同一設定の再実行はキャッシュ応答を再生し，ライブ LLM 呼び出しなしで高速・無料・安定する．cache-hit 率を確認する:
 
@@ -46,7 +68,7 @@ uv run chuang-tools show-experiment-settings --results-dir results/latest
 
 2 回目の同一実行は高い cache-hit 率と少ない/ゼロの新規呼び出しを報告するはず．
 
-## 5. オフライン (ライブ LLM 不要) で開発・テストする
+## 6. オフライン (ライブ LLM 不要) で開発・テストする
 
 統合テストは `socsim-llm` の `mock::ScriptedClient` でシミュレーションを駆動するためネットワーク不要:
 
@@ -57,7 +79,9 @@ cargo test
 実出力ファイルを書くオフラインの end-to-end スモーク (Ollama 無しのサンドボックス / CI 向け):
 
 ```bash
-cargo run --release --example mock_smoke -- results
+cargo run --release --example mock_smoke -- results   # 単一 mock run
+cargo run --release -- run --mock --max-steps 40       # run サブコマンド経由の mock
+cargo run --release -- reproduce --mock --quick        # 全アームの mock reproduce
 uv run chuang-tools visualize
 ```
 

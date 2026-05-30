@@ -7,10 +7,13 @@
 //! ・固定 mock を与えたときの socsim コア層の RNG 決定論性
 //! ・スクリプト応答に応じた意見更新 (合意/分極)
 
-use chuang_opinion_simulation::config::{Config, Framing, Topology};
+use chuang_opinion_simulation::config::{
+    parse_control, parse_topology, Config, ConfirmationBias, Framing, Topology,
+};
 use chuang_opinion_simulation::llm::{wrap_client, OpinionClient};
 use chuang_opinion_simulation::metrics::{convergence_time, diversity};
-use chuang_opinion_simulation::simulation::run_with_client;
+use chuang_opinion_simulation::reproduce_mock::build_reproduce_client;
+use chuang_opinion_simulation::simulation::{run_mock, run_with_client};
 
 use socsim_llm::mock::ScriptedClient;
 use socsim_llm::PromptCache;
@@ -137,4 +140,139 @@ fn different_seed_changes_trajectory() {
         a.opinion_history != b.opinion_history || a.final_step != b.final_step,
         "異なるシードは (一般に) 異なる軌跡を生む"
     );
+}
+
+// --------------------------------------------------------------------------- //
+// Wave 1: reproduce mock — バイアス無しは合意へ向かい，強バイアスは断片化を保つ
+// --------------------------------------------------------------------------- //
+
+fn repro_config(bias: ConfirmationBias, interact: bool) -> Config {
+    Config {
+        n_agents: 12,
+        max_steps: 40,
+        events_per_step: 2,
+        tol: 1e-12, // 早期停止させず同じ T まで回す
+        seed: Some(42),
+        topology: Topology::Full,
+        framing: Framing::False, // flat_earth は偽 → 真値方向は -2
+        bias,
+        interact,
+        ..Config::default()
+    }
+}
+
+#[test]
+fn reproduce_mock_no_bias_drives_consensus() {
+    let cfg = repro_config(ConfirmationBias::None, true);
+    let result = run_mock(&cfg).unwrap();
+    let last = result.metrics_history.last().unwrap();
+    // FALSE framing → 真値は -2．バイアス無し相互作用は -2 への合意 (低 D)．
+    assert!(
+        last.diversity < 0.3,
+        "バイアス無しは合意へ向かう (低 Diversity): D={}",
+        last.diversity
+    );
+    assert!(
+        last.bias < -1.0,
+        "Bias B は真値 (-2) 方向へ寄る: B={}",
+        last.bias
+    );
+}
+
+#[test]
+fn reproduce_mock_strong_bias_keeps_diversity() {
+    let none = run_mock(&repro_config(ConfirmationBias::None, true)).unwrap();
+    let strong = run_mock(&repro_config(ConfirmationBias::Strong, true)).unwrap();
+    let d_none = none.metrics_history.last().unwrap().diversity;
+    let d_strong = strong.metrics_history.last().unwrap().diversity;
+    // 確証バイアスを強めると合意が崩れ Diversity が増える (論文 Table 1 の知見)．
+    assert!(
+        d_strong > d_none,
+        "強バイアスは多様性を温存する: D(strong)={d_strong} > D(none)={d_none}"
+    );
+}
+
+// --------------------------------------------------------------------------- //
+// Wave 3: non-interaction control — 相互作用条件と (mock 上でも) 構造的に異なる
+// --------------------------------------------------------------------------- //
+
+#[test]
+fn non_interaction_control_differs_from_interaction() {
+    let interact = run_mock(&repro_config(ConfirmationBias::None, true)).unwrap();
+    let control = run_mock(&repro_config(ConfirmationBias::None, false)).unwrap();
+    // 非相互作用統制は近傍を見ないため意見が動かず，相互作用条件と軌跡が異なる．
+    assert_ne!(
+        interact.opinion_history, control.opinion_history,
+        "非相互作用統制は相互作用条件と異なる軌跡を生む"
+    );
+    let d_interact = interact.metrics_history.last().unwrap().diversity;
+    let d_control = control.metrics_history.last().unwrap().diversity;
+    // 相互作用は合意 (低 D)，統制は初期多様性を温存 (高 D)．
+    assert!(
+        d_control > d_interact,
+        "統制条件は合意せず多様性を保つ: D(control)={d_control} > D(interact)={d_interact}"
+    );
+}
+
+#[test]
+fn non_interaction_control_makes_no_llm_calls() {
+    // 非相互作用統制では dyadic 更新を行わない → LLM 呼び出しゼロ．
+    let control =
+        run_with_client(&repro_config(ConfirmationBias::None, false), scripted("1")).unwrap();
+    assert_eq!(
+        control.metadata.total(),
+        0,
+        "非相互作用統制は LLM を呼ばない"
+    );
+}
+
+// --------------------------------------------------------------------------- //
+// Wave 3: topology 選択 — full / er / ws / ba がすべて N ノードで構築される
+// --------------------------------------------------------------------------- //
+
+#[test]
+fn all_topologies_build_with_correct_node_count() {
+    for topo in [
+        Topology::Full,
+        Topology::ErdosRenyi,
+        Topology::WattsStrogatz,
+        Topology::BarabasiAlbert,
+    ] {
+        let mut cfg = repro_config(ConfirmationBias::None, true);
+        cfg.topology = topo;
+        cfg.n_agents = 10;
+        cfg.max_steps = 3;
+        let result = run_mock(&cfg).unwrap();
+        assert_eq!(
+            result.opinion_history[0].len(),
+            10,
+            "{:?}: 初期意見ベクトルは N 要素",
+            topo
+        );
+    }
+}
+
+#[test]
+fn topology_and_control_parsers() {
+    assert_eq!(parse_topology("er").unwrap(), Topology::ErdosRenyi);
+    assert_eq!(parse_topology("full").unwrap(), Topology::Full);
+    assert!(parse_topology("bogus").is_err());
+    assert!(parse_control("interaction").unwrap());
+    assert!(!parse_control("no-interaction").unwrap());
+    assert!(parse_control("bogus").is_err());
+}
+
+// --------------------------------------------------------------------------- //
+// mock の bit 決定論性: 同一シードの reproduce mock は完全再現する
+// --------------------------------------------------------------------------- //
+
+#[test]
+fn reproduce_mock_is_bit_deterministic() {
+    let cfg = repro_config(ConfirmationBias::Weak, true);
+    let a = run_mock(&cfg).unwrap();
+    let b = run_mock(&cfg).unwrap();
+    assert_eq!(a.opinion_history, b.opinion_history);
+    assert_eq!(a.final_step, b.final_step);
+    // build_reproduce_client が決定論的 scripted を返すことも確認．
+    let _c: OpinionClient = build_reproduce_client();
 }

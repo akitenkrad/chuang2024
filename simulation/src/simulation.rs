@@ -80,6 +80,9 @@ pub fn init_world(cfg: &Config, rng: &mut SimRng) -> OpinionWorld {
     let net = match cfg.topology {
         // 全結合 = 完全グラフ (ER の p=1)．
         Topology::Full => socsim_net::SocialNetwork::erdos_renyi(&ids, 1.0, rng),
+        Topology::ErdosRenyi => {
+            socsim_net::SocialNetwork::erdos_renyi(&ids, cfg.er_p.clamp(0.0, 1.0), rng)
+        }
         Topology::WattsStrogatz => {
             socsim_net::SocialNetwork::watts_strogatz(&ids, cfg.ws_k, cfg.ws_beta, rng)
         }
@@ -115,6 +118,20 @@ pub fn run(cfg: &Config) -> Result<SimulationResult, String> {
     let client =
         build_live_client(&cfg.llm).map_err(|e| format!("LLM クライアント構築に失敗: {e}"))?;
     run_with_client(cfg, client)
+}
+
+/// オフライン (LLM 不要) の決定論的 mock でシミュレーションを実行する．
+///
+/// [`crate::reproduce_mock::build_reproduce_client`] の scripted クライアント
+/// (in-memory cache) で駆動する．`reproduce --mock` / `run --mock` から使い，
+/// ライブ LLM 無しで論文の定性的挙動を構造的に再現する．mock は in-memory cache
+/// なので永続キャッシュ保存はスキップされる (`cfg.llm.cache_path` は無視扱い)．
+pub fn run_mock(cfg: &Config) -> Result<SimulationResult, String> {
+    // mock は永続キャッシュを持たないため，誤って save() を呼ばないよう cache_path
+    // を落とした設定で駆動する (in-memory cache は save() が no-op だが明示的に倒す)．
+    let mut mock_cfg = cfg.clone();
+    mock_cfg.llm.cache_path = None;
+    run_with_client(&mock_cfg, crate::reproduce_mock::build_reproduce_client())
 }
 
 /// 与えられた [`OpinionClient`] でシミュレーションを実行する．

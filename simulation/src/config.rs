@@ -18,6 +18,8 @@ use serde::Serialize;
 pub enum Topology {
     /// 全結合 (完全グラフ; 論文設定)．
     Full,
+    /// Erdős–Rényi ランダム網 (`er_p` で結合確率を指定)．
+    ErdosRenyi,
     /// Watts–Strogatz 小世界網．
     WattsStrogatz,
     /// Barabási–Albert スケールフリー網．
@@ -28,6 +30,7 @@ impl Topology {
     pub fn label(&self) -> &'static str {
         match self {
             Topology::Full => "full",
+            Topology::ErdosRenyi => "er",
             Topology::WattsStrogatz => "ws",
             Topology::BarabasiAlbert => "ba",
         }
@@ -38,10 +41,30 @@ impl Topology {
 pub fn parse_topology(s: &str) -> Result<Topology, String> {
     match s.trim().to_ascii_lowercase().as_str() {
         "full" | "complete" => Ok(Topology::Full),
+        "er" | "erdos_renyi" | "erdos-renyi" => Ok(Topology::ErdosRenyi),
         "ws" | "watts_strogatz" | "watts-strogatz" => Ok(Topology::WattsStrogatz),
         "ba" | "barabasi_albert" | "barabasi-albert" => Ok(Topology::BarabasiAlbert),
         _ => Err(format!(
-            "不正なトポロジ: \"{}\" (full / ws / ba のいずれか)",
+            "不正なトポロジ: \"{}\" (full / er / ws / ba のいずれか)",
+            s
+        )),
+    }
+}
+
+// --------------------------------------------------------------------------- //
+// 統制条件 (相互作用 / 非相互作用)
+// --------------------------------------------------------------------------- //
+
+/// 文字列から «相互作用するか» (`Config::interact`) をパースする．
+///
+/// `no-interaction` 統制では各エージェントが近傍を見ずに進化し，網による社会的
+/// 影響と LLM 自身の prior によるドリフトを分離する (論文の鍵となる ablation)．
+pub fn parse_control(s: &str) -> Result<bool, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "interaction" | "interact" | "social" | "on" => Ok(true),
+        "no-interaction" | "no_interaction" | "noninteraction" | "isolated" | "off" => Ok(false),
+        _ => Err(format!(
+            "不正な統制条件: \"{}\" (interaction / no-interaction)",
             s
         )),
     }
@@ -201,8 +224,10 @@ pub struct Config {
     pub memory_mode: MemoryMode,
     /// 相互作用するか (false = 非相互作用統制条件; Phase 3 拡張点)．
     pub interact: bool,
-    /// トポロジ (full / ws / ba)．
+    /// トポロジ (full / er / ws / ba)．
     pub topology: Topology,
+    /// ER の結合確率 p ∈ [0,1] (`Topology::ErdosRenyi` のとき有効)．
+    pub er_p: f64,
     /// WS の各ノードの初期次数 k (偶数)．
     pub ws_k: usize,
     /// WS の再配線確率 β．
@@ -234,6 +259,7 @@ impl Default for Config {
             memory_mode: MemoryMode::Cumulative,
             interact: true,
             topology: Topology::Full,
+            er_p: 0.3,
             ws_k: 4,
             ws_beta: 0.1,
             ba_m: 2,
@@ -258,6 +284,7 @@ pub struct RunConfigJson {
     pub memory_mode: String,
     pub interact: bool,
     pub topology: String,
+    pub er_p: f64,
     pub ws_k: usize,
     pub ws_beta: f64,
     pub ba_m: usize,
@@ -282,6 +309,7 @@ impl Config {
             memory_mode: self.memory_mode.label().to_string(),
             interact: self.interact,
             topology: self.topology.label().to_string(),
+            er_p: self.er_p,
             ws_k: self.ws_k,
             ws_beta: self.ws_beta,
             ba_m: self.ba_m,
