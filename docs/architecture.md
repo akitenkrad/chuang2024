@@ -8,7 +8,7 @@ This project replicates Chuang et al. (2024), "Simulating Opinion Dynamics with 
 chuang2024/
 ├── Cargo.toml                  # [workspace] members = ["simulation"]
 ├── pyproject.toml              # uv workspace (members = ["tools"])
-├── simulation/                 # Rust crate `chuang-opinion-simulation` (bin `chuang`)
+├── simulation/                 # Rust crate `chuang-simulation` (bin `chuang`)
 │   ├── Cargo.toml              # socsim git deps: core / engine / net / llm (features=["live"])
 │   ├── src/
 │   │   ├── main.rs             # clap: run / sweep / reproduce
