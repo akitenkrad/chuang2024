@@ -44,7 +44,7 @@ RNG ストリーム (コア層のみ):
 - `derive_seed(root, &[0])` → world-init RNG (ネットワーク生成・ペルソナ/初期意見割当)．
 - `derive_seed(root, &[1])` → engine RNG (メカニズム内のペア一様サンプリング)．
 
-LLM レイヤは `SimRng` の支配下に **ない**．その再現性はキャッシュに由来する: ウォームキャッシュでは同一プロンプトが同一応答を再生する．`run_metadata.json` にモデル・endpoint・温度・seed・cache-hit 率を記録し，実行が何と通信したかを明示する．
+LLM レイヤは `SimRng` の支配下に **ない**．その再現性はキャッシュに由来する: ウォームキャッシュでは同一プロンプトが同一応答を再生する．runvault の `run.json` の `llm` ブロックが provider / モデル / 温度を，run スコープの指標が呼び出し数と cache-hit 率を記録し，実行が何と通信したかを明示する．
 
 ## LLM クライアント (`socsim-llm`)
 
@@ -92,7 +92,7 @@ CachingClient< Box<dyn LlmClient> >   // 型消去: 本番 FallbackClient< Ollam
 - **polarization** — 意見半径 (2) で正規化した `|opinion|` の平均，∈ `[0,1]`．
 - **convergence_time** — 分散 `< tol` となる最初のステップ (sweep サマリで計算)．
 
-`reproduce` サブコマンドはこれらのステップ別メトリクスを条件横断 (bias × control，および topology 比較) で集計し `reproduce_summary.json` に書き出し，論文の見出しアンカー (合意ドリフト，バイアスによる `D` 単調増大，相互作用駆動の合意) を評価する．オフライン実行では `reproduce_mock` モジュールが決定論的 scripted クライアントを供給し，聴者応答が無/弱バイアスでフレーミングの真値極へドリフトし強バイアスでスタンスを保持する — ライブ LLM 無しで合意→断片化の遷移を構造的に再現する．
+`reproduce` サブコマンドはこれらのステップ別メトリクスを条件横断 (bias × control，および topology 比較) で集計し 1 本の run の run スコープ指標に書き出し，論文の見出しアンカー (合意ドリフト，バイアスによる `D` 単調増大，相互作用駆動の合意) を評価する．オフライン実行では `reproduce_mock` モジュールが決定論的 scripted クライアントを供給し，聴者応答が無/弱バイアスでフレーミングの真値極へドリフトし強バイアスでスタンスを保持する — ライブ LLM 無しで合意→断片化の遷移を構造的に再現する．
 
 ## socsim 基盤
 

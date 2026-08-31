@@ -44,7 +44,7 @@ RNG streams (core layer only):
 - `derive_seed(root, &[0])` → world-init RNG (network generation, persona/initial-opinion assignment).
 - `derive_seed(root, &[1])` → engine RNG (speaker/listener pair sampling inside the mechanism).
 
-The LLM layer is **not** under `SimRng`. Its reproducibility comes entirely from the cache: with a warm cache, an identical prompt replays an identical response. `run_metadata.json` records model / endpoint / temperature / seed / cache-hit rate so a run logs exactly what it talked to.
+The LLM layer is **not** under `SimRng`. Its reproducibility comes entirely from the cache: with a warm cache, an identical prompt replays an identical response. The runvault `run.json` records provider / model / temperature in its `llm` block, and the run-scope metrics record the call count and cache-hit rate, so a run logs exactly what it talked to.
 
 ## The LLM client (`socsim-llm`)
 
@@ -92,7 +92,7 @@ Computed every step over the opinion vector `F_o^t` (see `metrics.rs`):
 - **polarization** — mean `|opinion|` normalised by the opinion radius (2), in `[0,1]`.
 - **convergence_time** — first step at which variance `< tol` (computed in the sweep summary).
 
-The `reproduce` subcommand aggregates these per-step metrics across conditions (bias × control, and the topology comparison) into `reproduce_summary.json`, evaluating the paper's headline anchors (consensus drift, monotone `D` increase with bias, interaction-driven consensus). For offline runs the `reproduce_mock` module supplies a deterministic scripted client whose listener reply drifts toward the framing's truthful pole under no/weak bias and holds its stance under strong bias — structurally reproducing the consensus→fragmentation transition without a live LLM.
+The `reproduce` subcommand aggregates these per-step metrics across conditions (bias × control, and the topology comparison) into one run's run-scope metrics, evaluating the paper's headline anchors (consensus drift, monotone `D` increase with bias, interaction-driven consensus). For offline runs the `reproduce_mock` module supplies a deterministic scripted client whose listener reply drifts toward the framing's truthful pole under no/weak bias and holds its stance under strong bias — structurally reproducing the consensus→fragmentation transition without a live LLM.
 
 ## socsim framework
 

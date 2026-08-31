@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """reproduce_paper.py — Chuang et al. (2024) 見出し的知見の一括再現レポート + 図．
 
-Rust の `chuang reproduce` が書き出す `reproduce_summary.json` (bias × control 行列・
-topology 比較・論文知見アンカー) と条件別 `metrics_<condition>.csv` を読み，論文 4.3
-の中心的知見を 3 つの図で可視化しつつ PASS/off テーブルを表示する:
+Rust の `chuang reproduce` が書いた runvault の run ディレクトリを読み，論文 4.3 の
+中心的知見を 3 つの図で可視化しつつ PASS/off テーブルを表示する．セル集約と代表 run の
+時系列は `metrics.csv` (条件ラベルを接頭辞に持つ run スコープ指標) が，アンカーの帯と
+PASS/off は `events.jsonl` の `x.chuang2024.anchor` 行が持つ (旧 `reproduce_summary.json`
+と `metrics_<condition>.csv` に相当する)．
+
+どの run を見るかは `--results-dir` を省略すれば runvault が答える
+(`runvault path --experiment chuang --latest --subcommand reproduce`)．
+
+3 つの図:
 
     1. bias_control_matrix.png
        確証バイアス (none/weak/strong) × 統制 (interaction / no-interaction) の最終
@@ -23,12 +30,12 @@ topology 比較・論文知見アンカー) と条件別 `metrics_<condition>.cs
 Usage:
     uv run chuang-tools reproduce --run --mock          # mock で一括再現 + 図
     uv run chuang-tools reproduce --run --mock --quick  # 軽量版 (動作確認用)
-    uv run chuang-tools reproduce                        # 既存 results/latest を可視化
-    uv run chuang-tools reproduce --results-dir results/reproduce_20260530_000000
+    uv run chuang-tools reproduce                        # 直近の reproduce run を可視化
+    uv run chuang-tools reproduce --results-dir "$(runvault path --experiment chuang --latest --subcommand reproduce)"
     uv run chuang-tools reproduce --json
 
 Outputs:
-    {results_dir}/figures/{bias_control_matrix,topology_comparison,control_contrast}.png
+    results/chuang/figures/{run_slug}/{bias_control_matrix,topology_comparison,control_contrast}.png
     stdout: アンカーごとの PASS / OFF．
 """
 
@@ -45,7 +52,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from socsim_tools.io import resolve_results_dir
+from runvault.read import (
+    config_parameters,
+    events_table,
+    figures_dir,
+    metrics_wide,
+    run_scope_metrics,
+    runvault_path,
+)
 
 # --------------------------------------------------------------------------- #
 # 表示設定 (CJK フォントが利用不能でも落ちないように try)
@@ -85,15 +99,75 @@ def _run_binary(*, mock: bool, quick: bool, seed: int, output_dir: str) -> None:
     subprocess.run(cmd, check=True)
 
 
-def _load_summary(results_dir: Path) -> dict:
-    path = results_dir / "reproduce_summary.json"
-    if not path.exists():
-        raise FileNotFoundError(
-            f"reproduce_summary.json が見つかりません: {path}\n"
-            f"  先に `chuang-tools reproduce --run --mock` を実行してください．"
-        )
-    with path.open(encoding="utf-8") as f:
-        return json.load(f)
+BIASES = ["none", "weak", "strong"]
+ARMS = [("interact", "interaction"), ("control", "no-interaction")]
+CELL_FIELDS = [
+    "mean_final_bias",
+    "mean_final_diversity",
+    "mean_final_clusters",
+    "mean_diversity_drop",
+    "mean_final_step",
+]
+
+
+def _load_summary(run_dir: Path) -> dict:
+    """run ディレクトリから旧 `reproduce_summary.json` と同じ形の要約を組み直す．
+
+    runvault はこの要約をディスク上に持たない．セル集約は `metrics.csv` の run
+    スコープ指標 (`<label>_mean_*`)，アンカーは `events.jsonl` の
+    `x.chuang2024.anchor` 行，どの条件を回したかは `config.json` の `parameters` が
+    持つので，そこから復元する．legacy の run ディレクトリは
+    `reproduce_summary.json` をそのまま読む．
+    """
+    legacy = run_dir / "reproduce_summary.json"
+    if legacy.exists():
+        with legacy.open(encoding="utf-8") as f:
+            return json.load(f)
+
+    scoped = run_scope_metrics(run_dir)
+    params = config_parameters(run_dir)
+
+    def cell(label: str, extra: dict) -> dict | None:
+        if f"{label}_mean_final_diversity" not in scoped:
+            return None
+        c = {"label": label, **extra}
+        c.update({f: scoped[f"{label}_{f}"] for f in CELL_FIELDS})
+        return c
+
+    matrix = []
+    for b in BIASES:
+        for arm, control in ARMS:
+            c = cell(f"bias-{b}_{arm}", {"bias": b, "control": control})
+            if c is not None:
+                matrix.append(c)
+
+    topology = []
+    for t in params.get("topology_values", []):
+        c = cell(f"topo-{t}", {"topology": t})
+        if c is not None:
+            topology.append(c)
+
+    anchors = []
+    for _, ev in events_table(run_dir, kind="x.chuang2024.anchor").iterrows():
+        hi = ev.get("target_hi")
+        anchors.append({
+            "name": ev["label"],
+            "paper": ev["paper"],
+            "observed": float(ev["observed"]),
+            "target_lo": float(ev["target_lo"]),
+            # 上限なしのアンカーは列ごと落としてあるので None に戻す
+            "target_hi": None if hi is None or pd.isna(hi) else float(hi),
+            "pass": bool(ev["pass"]),
+        })
+
+    return {
+        "mode": "mock" if params.get("mock") else "live",
+        "bias_control_matrix": matrix,
+        "topology_comparison": topology,
+        "anchors": anchors,
+        "n_pass": int(scoped.get("checks_passed", sum(a["pass"] for a in anchors))),
+        "n_total": int(scoped.get("checks_total", len(anchors))),
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -193,25 +267,42 @@ def _topology_comparison(summary: dict, out_path: Path) -> None:
 
 
 def _control_contrast(results_dir: Path, out_path: Path) -> None:
-    """interaction vs no-interaction の Diversity D 時系列 (代表 run)．"""
+    """interaction vs no-interaction の Diversity D 時系列 (代表 run)．
+
+    条件ごとの時系列は `metrics.csv` に `<label>_diversity` として入っている
+    (旧 `metrics_<condition>.csv` に相当)．legacy の run ディレクトリは
+    `metrics_<label>.csv` をそのまま読む．
+    """
     pairs = [
         ("bias-none_interact", "none / interaction", COLOR_INTERACT, "-"),
         ("bias-none_control", "none / no-interaction", COLOR_CONTROL, "--"),
         ("bias-strong_interact", "strong / interaction", COLOR_BIAS, "-"),
         ("bias-strong_control", "strong / no-interaction", COLOR_DIV, "--"),
     ]
+    wide = None
+    metrics_path = results_dir / "metrics.csv"
+    if metrics_path.exists():
+        wide = metrics_wide(metrics_path)
+        if "step" in wide.columns and "t" not in wide.columns:
+            wide = wide.rename(columns={"step": "t"})
+
     fig, ax = plt.subplots(figsize=(9, 5.5), facecolor=COLOR_BG)
     ax.set_facecolor(COLOR_BG)
     plotted = 0
     for label, legend, color, ls in pairs:
-        path = results_dir / f"metrics_{label}.csv"
-        if not path.exists():
+        legacy = results_dir / f"metrics_{label}.csv"
+        if legacy.exists():
+            df = pd.read_csv(legacy)
+            ts, ys = df["t"], df["diversity"]
+        elif wide is not None and f"{label}_diversity" in wide.columns:
+            sub = wide[["t", f"{label}_diversity"]].dropna()
+            ts, ys = sub["t"], sub[f"{label}_diversity"]
+        else:
             continue
-        df = pd.read_csv(path)
-        ax.plot(df["t"], df["diversity"], color=color, ls=ls, lw=2, label=legend)
+        ax.plot(ts, ys, color=color, ls=ls, lw=2, label=legend)
         plotted += 1
     if plotted == 0:
-        print(f"  警告: metrics_<condition>.csv が無いため control_contrast をスキップ")
+        print("  警告: 条件別の diversity 時系列が無いため control_contrast をスキップ")
         plt.close(fig)
         return
     ax.set_xlabel("時刻 t (ステップ)")
@@ -281,9 +372,12 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--results-dir", "--results_dir", default=None,
-                        help="reproduce_summary.json のあるディレクトリ (既定: results/latest)")
+                        help=("reproduce の run ディレクトリ．未指定時は runvault に"
+                              "最新の run を聞く (--experiment chuang --subcommand reproduce)．"))
+    parser.add_argument("--results-root", "--results_root", default="results",
+                        help="--results-dir 未指定時に runvault が探す results ルート (既定: results)")
     parser.add_argument("--output-dir", "--output_dir", default=None,
-                        help="図の保存先 (既定: {results_dir}/figures)")
+                        help="図の保存先 (既定: results/chuang/figures/{run_slug})")
     parser.add_argument("--run", action="store_true",
                         help="先に Rust バイナリ (reproduce) を実行する．")
     parser.add_argument("--mock", action="store_true",
@@ -300,7 +394,12 @@ def main(argv: list[str] | None = None) -> int:
         _run_binary(mock=args.mock, quick=args.quick, seed=args.seed,
                     output_dir=args.cargo_output_dir)
 
-    results_dir = resolve_results_dir(args.results_dir)
+    if args.results_dir is None:
+        results_dir = Path(
+            runvault_path("chuang", args.results_root, subcommand="reproduce")
+        )
+    else:
+        results_dir = Path(args.results_dir)
     try:
         summary = _load_summary(results_dir)
     except FileNotFoundError as exc:
@@ -313,7 +412,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _print_report(summary, results_dir)
 
-    out_dir = Path(args.output_dir) if args.output_dir else results_dir / "figures"
+    out_dir = Path(args.output_dir) if args.output_dir else Path(figures_dir(results_dir))
     os.makedirs(out_dir, exist_ok=True)
     print(f"\n[図] 出力先: {out_dir}")
     _bias_control_matrix(summary, out_dir / "bias_control_matrix.png")

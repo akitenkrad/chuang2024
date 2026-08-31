@@ -13,7 +13,7 @@ LLM 出力は socsim の bit 再現性の **外側** にある．したがって
 - **決定論的 socsim コア** — ネットワーク生成・話者/聴者サンプリング (`ctx.rng`, ChaCha20)・スケジューリング・メトリクス・収束判定．seed を固定すれば bit 単位で再現する．
 - **非決定的 LLM レイヤ** — ツイート生成・所感報告・意見分類．`socsim-llm` の `CachingClient` (`hash(prompt+model)` → 応答キャッシュ)・`temperature=0`・seed 固定で擬似決定論化する．プロバイダ優先順位は **Ollama 第一 → OpenAI フォールバック** で，`socsim-llm` の `FallbackClient` を用いる (自前実装しない)．
 
-再現性の本体はモデルではなく **キャッシュ** である．ウォームキャッシュは同一応答を再生するため，再実行はコスト 0 かつ安定する．各実行は `run_metadata.json` にモデル・endpoint・温度・seed・cache-hit 率を記録する．ローカル既定モデル (`llama3.2`) は論文の `gpt-3.5-turbo` と異なるため，再現目標は **定性的** (合意傾向，Bias `B` の符号，確証バイアス強化に伴う Diversity `D` の単調増大) であり，厳密な数値一致ではない．
+再現性の本体はモデルではなく **キャッシュ** である．ウォームキャッシュは同一応答を再生するため，再実行はコスト 0 かつ安定する．各実行はモデル・provider・温度を runvault の `run.json` の `llm` ブロックに，呼び出し数と cache-hit 率を run スコープの指標として記録する．ローカル既定モデル (`llama3.2`) は論文の `gpt-3.5-turbo` と異なるため，再現目標は **定性的** (合意傾向，Bias `B` の符号，確証バイアス強化に伴う Diversity `D` の単調増大) であり，厳密な数値一致ではない．
 
 ## インストール & クイックスタート
 
@@ -38,7 +38,7 @@ uv sync
 uv run chuang-tools visualize
 
 # 実行設定と LLM メタデータの確認
-uv run chuang-tools show-experiment-settings --results-dir results/latest
+uv run chuang-tools show-experiment-settings
 ```
 
 ## ドキュメント
@@ -54,7 +54,7 @@ uv run chuang-tools show-experiment-settings --results-dir results/latest
 
 - `run` — 単一設定．`--control no-interaction` アーム (近傍を見ず単独進化) とオフライン `--mock` モードを備える．
 - `sweep` — 確証バイアス × フレーミング × トポロジ (`full` / `er` / `ws` / `ba`) の格子走査．
-- `reproduce` — 論文の見出し的知見をワンコマンドで再現: bias × control 行列 (無バイアス→真実合意 / 強バイアス→断片化 / 非相互作用統制が社会的影響と LLM 固有のドリフトを分離) と topology 比較を実行し，観測 vs 論文のアンカーを `reproduce_summary.json` に書き出す．
+- `reproduce` — 論文の見出し的知見をワンコマンドで再現: bias × control 行列 (無バイアス→真実合意 / 強バイアス→断片化 / 非相互作用統制が社会的影響と LLM 固有のドリフトを分離) と topology 比較を実行し，観測 vs 論文のアンカーを run スコープの指標と `x.chuang2024.anchor` イベントに記録する．
 - Python `chuang-tools`: `visualize` / `visualize-sweep` / `show-experiment-settings` / `reproduce` (再現図を描く)．
 
 意見分類器は `reflective` メモリ方式ラベルを持つが，現行の更新経路は上述の `cumulative` メモリを用いる．reflective メモリの要約は拡張点として残している．

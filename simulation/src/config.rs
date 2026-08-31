@@ -1,10 +1,8 @@
 //! シミュレーション設定．
 //!
 //! Chuang et al. (2024) のコアモデル (dyadic LLM 意見力学) と感度分析パラメータ
-//! を保持する [`Config`] と，その JSON シリアライズ表現を定義する．意見空間・
-//! トポロジ・確証バイアス・フレーミング・メモリ方式などの列挙型もここに集約する．
-
-use serde::Serialize;
+//! を保持する [`Config`] を定義する．意見空間・トポロジ・確証バイアス・
+//! フレーミング・メモリ方式などの列挙型もここに集約する．
 
 // --------------------------------------------------------------------------- //
 // トポロジ
@@ -244,8 +242,6 @@ pub struct Config {
     pub seed: Option<u64>,
     /// LLM レイヤ設定．
     pub llm: LlmSettings,
-    /// 結果出力ディレクトリ．
-    pub output_dir: String,
 }
 
 impl Default for Config {
@@ -268,58 +264,6 @@ impl Default for Config {
             tol: 1e-6,
             seed: Some(42),
             llm: LlmSettings::default(),
-            output_dir: "results".to_string(),
-        }
-    }
-}
-
-/// `config.json` (run 用) のシリアライズ表現．
-#[derive(Serialize)]
-pub struct RunConfigJson {
-    pub command: &'static str,
-    pub n_agents: usize,
-    pub topic: String,
-    pub framing: String,
-    pub bias: String,
-    pub memory_mode: String,
-    pub interact: bool,
-    pub topology: String,
-    pub er_p: f64,
-    pub ws_k: usize,
-    pub ws_beta: f64,
-    pub ba_m: usize,
-    pub events_per_step: usize,
-    pub max_steps: usize,
-    pub tol: f64,
-    pub seed: Option<u64>,
-    pub llm_temperature: f32,
-    pub llm_seed: u64,
-    pub output_dir: String,
-}
-
-impl Config {
-    /// `config.json` 用の表現を組み立てる．
-    pub fn to_run_config_json(&self) -> RunConfigJson {
-        RunConfigJson {
-            command: "run",
-            n_agents: self.n_agents,
-            topic: self.topic.clone(),
-            framing: self.framing.label().to_string(),
-            bias: self.bias.label().to_string(),
-            memory_mode: self.memory_mode.label().to_string(),
-            interact: self.interact,
-            topology: self.topology.label().to_string(),
-            er_p: self.er_p,
-            ws_k: self.ws_k,
-            ws_beta: self.ws_beta,
-            ba_m: self.ba_m,
-            events_per_step: self.events_per_step,
-            max_steps: self.max_steps,
-            tol: self.tol,
-            seed: self.seed,
-            llm_temperature: self.llm.temperature,
-            llm_seed: self.llm.seed,
-            output_dir: self.output_dir.clone(),
         }
     }
 }

@@ -1,16 +1,18 @@
 # Visualization
 
-The Python package `chuang-tools` (module `chuang_tools`) reads the Rust simulation's CSV/JSON output and produces figures. Install it once at the workspace root with `uv sync`, then invoke subcommands with `uv run chuang-tools <subcommand>`.
+The Python package `chuang-tools` (module `chuang_tools`) reads the runvault run directories the Rust simulation writes and produces figures. Install it once at the workspace root with `uv sync`, then invoke subcommands with `uv run chuang-tools <subcommand>`.
+
+Which run to read is answered by runvault: omit `--results-dir` and the tools call `runvault path --latest`. They never scan `results/` for the newest-looking directory. Figures are written *beside* the run (`results/chuang/figures/{run_slug}/`), never inside it — `manifest.csv` is settled by `finish()`, so anything added afterwards would carry no hash.
 
 ## `visualize` — a single run
 
 ```bash
 uv run chuang-tools visualize
-uv run chuang-tools visualize --results_dir results/20260524_153000
-uv run chuang-tools visualize --output_dir out
+uv run chuang-tools visualize --results-dir "$(runvault path --experiment chuang --latest --subcommand run --standalone)"
+uv run chuang-tools visualize --output-dir out
 ```
 
-Reads `opinions.csv` and `metrics.csv` from `--results_dir` (default `results/latest`) and writes to `{results_dir}/figures/`:
+Reads `artifacts/opinions.csv` and `metrics.csv` from the run directory and writes to `results/chuang/figures/{run_slug}/`. The long `metrics.csv` is turned back into one row per step by `runvault.read.metrics_wide`:
 
 - `opinion_trajectory.png` — each agent's opinion `o ∈ {−2..2}` over time. A small vertical jitter separates overlapping integer trajectories. Convergence shows as the lines collapsing onto one level; fragmentation shows as several persistent levels.
 - `metrics_timeseries.png` — three panels: opinion **variance** (convergence indicator), **Bias B** (mean opinion, with a dashed zero line — drift toward the truthful pole), and **Diversity D** (standard deviation — opinion spread).
@@ -19,10 +21,10 @@ Reads `opinions.csv` and `metrics.csv` from `--results_dir` (default `results/la
 
 ```bash
 uv run chuang-tools visualize-sweep
-uv run chuang-tools visualize-sweep --sweep_dir results/20260524_160000_sweep
+uv run chuang-tools visualize-sweep --sweep-dir "$(runvault path --experiment chuang --latest --subcommand sweep)"
 ```
 
-Reads `sweep_summary.csv` from `--sweep_dir` and writes to `{sweep_dir}/figures/`:
+Rebuilds the one-row-per-trial table from the sweep parent's children (`runvault.read.sweep_events_table`: each child's `parameters` for the condition, its `terminal` events for the trials) and writes to `results/chuang/figures/{run_slug}/`:
 
 - `sweep_diversity_heatmap.png` — final **Diversity D** averaged over runs, as a confirmation-bias × topology heatmap. The paper's headline finding is that D rises with confirmation bias (`none → weak → strong`).
 - `sweep_bias_heatmap.png` — final **Bias B** as a confirmation-bias × topology heatmap (diverging colormap centred at 0).
@@ -37,11 +39,11 @@ The console also prints the per-bias mean diversity `D̄`.
 uv run chuang-tools reproduce --run --mock
 uv run chuang-tools reproduce --run --mock --quick   # fast smoke
 # Visualize an existing reproduce directory
-uv run chuang-tools reproduce --results-dir results/reproduce_20260530_000000
+uv run chuang-tools reproduce --results-dir "$(runvault path --experiment chuang --latest --subcommand reproduce)"
 uv run chuang-tools reproduce --json                 # print the summary as JSON
 ```
 
-Reads `reproduce_summary.json` (and the per-condition `metrics_{condition}.csv`) written by the Rust `reproduce` subcommand, prints the observed-vs-paper anchor table, and writes to `{results_dir}/figures/`:
+Rebuilds the summary from the reproduce run — the cell aggregates and the per-condition time series from `metrics.csv`, the anchor bands and verdicts from the `x.chuang2024.anchor` rows of `events.jsonl` — prints the observed-vs-paper anchor table, and writes to `results/chuang/figures/{run_slug}/`:
 
 - `bias_control_matrix.png` — final **Diversity D** and **Bias B** as grouped bars over confirmation bias `none / weak / strong`, with the `interaction` and `no-interaction` arms side by side. Shows the headline result (no bias → low D consensus; strong bias → high D fragmentation) and the control arm (no consensus when interaction is removed).
 - `topology_comparison.png` — final **Diversity D** and **convergence step** across `full / er / ws / ba` (bias `none`, interaction).
@@ -53,11 +55,11 @@ Add `--run` to generate fresh results first (with `--mock` in CI/sandboxes to av
 
 ```bash
 uv run chuang-tools show-experiment-settings
-uv run chuang-tools show-experiment-settings --results-dir results/20260524_153000
-uv run chuang-tools show-experiment-settings --results-dir results/latest --json
+uv run chuang-tools show-experiment-settings --results-dir "$(runvault path --experiment chuang --latest --subcommand run --standalone)"
+uv run chuang-tools show-experiment-settings --json
 ```
 
-Renders the run/sweep configuration (`config.json` or `sweep_config.json`) and, when present, the LLM metadata from `run_metadata.json`: model, endpoint, temperature, seed, total calls, cache hits and **cache-hit rate**. The cache-hit rate is the practical reproducibility signal — a warm cache replays identical responses, so a re-run reports a high hit rate and issues few/zero live LLM calls.
+Renders the run configuration (`config.json`, under `parameters`) — which subcommand it belongs to is answered by `run.json` — and the LLM metadata: model, provider and temperature from the `llm` block of `run.json`, and total calls, cache hits and **cache-hit rate** from the run-scope metrics. Legacy `results/{timestamp}/` directories with a flat `config.json` / `sweep_config.json` / `run_metadata.json` still read. The cache-hit rate is the practical reproducibility signal — a warm cache replays identical responses, so a re-run reports a high hit rate and issues few/zero live LLM calls.
 
 ## Interpreting the outputs
 

@@ -63,7 +63,7 @@ uv run chuang-tools visualize-sweep
 初回実行が `.llm_cache/cache.json` を埋める．同一設定の再実行はキャッシュ応答を再生し，ライブ LLM 呼び出しなしで高速・無料・安定する．cache-hit 率を確認する:
 
 ```bash
-uv run chuang-tools show-experiment-settings --results-dir results/latest
+uv run chuang-tools show-experiment-settings
 ```
 
 2 回目の同一実行は高い cache-hit 率と少ない/ゼロの新規呼び出しを報告するはず．

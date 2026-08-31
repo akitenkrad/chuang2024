@@ -56,12 +56,15 @@ cargo run --release -- run --control no-interaction --bias none --seed 42
 | `--cache-path` | `.llm_cache/cache.json` | prompt→response cache file (gitignored) |
 | `--output-dir` | `results` | base output directory |
 
-Outputs are written to `results/{timestamp}/` and `results/latest` is repointed:
+Output goes to a runvault run directory, `results/chuang/run_{timestamp}_{hash}/`. runvault creates it and owns the naming; there is no `latest` symlink. Resolve it with `runvault path --experiment chuang --latest --subcommand run --standalone`.
 
-- `config.json` — the full run configuration.
-- `opinions.csv` — long format `t, agent_id, opinion[, text]`. The `text` column carries the final tweet per agent on the last step only (intermediate tweets are omitted to keep the file small).
-- `metrics.csv` — `t, variance, bias, diversity, n_clusters, polarization`.
-- `run_metadata.json` — LLM model / endpoint / temperature / seed / total calls / cache hits / cache-hit rate, plus the determinism note.
+- `config.json` — the envelope; the run configuration is under `parameters`.
+- `run.json` — identity: repo, git commit, hashes, `master_seed`, the `llm` block (provider / model / temperature) and the replication's paper metadata.
+- `metrics.csv` — long format `run_uid, step, step_unit, scope, name, value`. Per step (`step_unit=step`, `scope=run`): `variance`, `bias`, `diversity`, `n_clusters`, `polarization` — the columns of the old wide `metrics.csv` under the same names. Without a step: `converged`, `final_step`, `llm_calls`, `llm_cache_hits`, `llm_cache_hit_rate`.
+- `events.jsonl` — one `observation` per step plus the `terminal` row for the run (outcome, censoring, budget, seed, and the final `bias` / `diversity` / `variance` / `n_clusters` / `polarization`).
+- `artifacts/opinions.csv` — long format `t, agent_id, opinion[, text]`. The `text` column carries the final tweet per agent on the last step only (intermediate tweets are omitted to keep the file small).
+
+Wall-clock time is not a metric: `status.json` holds `duration_sec`.
 
 ## `sweep` — confirmation-bias × framing × topology
 
@@ -92,10 +95,12 @@ cargo run --release -- sweep \
 | `--cache-path` | `.llm_cache/cache.json` | shared cache across the whole sweep (raises the hit rate) |
 | `--output-dir` | `results` | base output directory |
 
-Outputs land in `results/{timestamp}_sweep/`:
+A sweep is one parent run plus one child run per condition:
 
-- `sweep_summary.csv` — one row per `(bias, framing, topology, run)` with `final_bias`, `final_diversity`, `final_variance`, `n_clusters`, `polarization`, `convergence_time`, `converged`, `cache_hit_rate`.
-- `sweep_config.json` — the sweep grid and shared parameters.
+- the parent (`subcommand=sweep`) holds the grid definition in `parameters` and no per-condition metric. It names no `master_seed` — a grid is not one simulation.
+- each child (`subcommand=sweep-point`) is *the trials of one condition*. Its `parameters` carry `bias` / `framing` / `topology` / `memory`, its `events.jsonl` carries one `terminal` row per trial (`trial_seed`, `convergence_time`, `final_bias`, `final_diversity`, `final_variance`, `n_clusters`, `polarization`, `cache_hit_rate` — the columns of the old `sweep_summary.csv`), and its `metrics.csv` carries the condition's aggregate at `scope=run`.
+
+Per-trial values cannot live in `metrics.csv`: its primary key is `(run_uid, name, step, step_unit, scope)`, so `runs` trials of one condition would collide. A figure that needs the spread is rebuilt from `events.jsonl`.
 
 The console prints the per-bias mean diversity `D̄` — the paper's headline is that `D̄` increases monotonically `none → weak → strong`.
 
@@ -134,10 +139,10 @@ cargo run --release -- reproduce --cache-path .llm_cache/cache.json --seed 42
 | `--cache-path` | `.llm_cache/cache.json` | shared prompt cache (live mode only) |
 | `--output-dir` | `results` | base output directory |
 
-Outputs land in `results/reproduce_{timestamp}/`:
+Output goes to one run directory (`subcommand=reproduce`):
 
-- `reproduce_summary.json` — the bias × control matrix, the topology comparison, and the anchor table (observed vs paper, with `PASS` / `OFF`).
-- `metrics_{condition}.csv` — the representative-run metric history per condition (used by the Python `reproduce` to draw the `D` time series).
+- `metrics.csv` — per condition, the cell aggregates (`{condition}_mean_final_bias`, `_mean_final_diversity`, `_mean_final_clusters`, `_mean_diversity_drop`, `_mean_final_step`) at `scope=run`, and the representative run's per-step history as `{condition}_variance` … `{condition}_polarization`. The condition label is folded into the name because nine conditions share one run and `(step, scope, name)` is the key. The anchors' observed values are `anchor_{id}`, with `checks_passed` / `checks_total`.
+- `events.jsonl` — one `x.chuang2024.anchor` row per anchor: the band and the `PASS` / `OFF` verdict. Those are a direction and a category, not numbers, so they cannot be metrics. The bands are qualitative anchors *this replication* chose rather than values the paper reports, so they are not written to `reference.csv`.
 
 The Python `chuang-tools reproduce` reads this summary and renders the figures; see [Visualization](visualization.md).
 

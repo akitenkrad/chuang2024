@@ -2,13 +2,16 @@
 """
 visualize_sweep.py — Chuang et al. (2024) LLM 意見力学 スイープ結果 可視化スクリプト
 
-results/latest (または --sweep_dir 指定先) の sweep_summary.csv を読み，
-確証バイアス × トポロジ の格子について最終 Diversity D / Bias B / 分極を集計し，
+確証バイアス × トポロジ の格子について最終 Diversity D / Bias B を集計し，
 ヒートマップと棒グラフで可視化する (論文 Table 1 風)．
+
+1 行 1 試行の表は，スイープ親 run の子 (`subcommand=sweep-point`) の
+`events.jsonl` から組み直す．平均を採るには条件ごとの集約ではなく個々の試行が
+要るので，子 run の run スコープ集約ではなく終端イベントを読む．
 
 Usage:
     uv run chuang-tools visualize-sweep
-    uv run chuang-tools visualize-sweep --sweep_dir results/20260524_160000_sweep
+    uv run chuang-tools visualize-sweep --sweep-dir "$(runvault path --experiment chuang --latest --subcommand sweep)"
 
 Outputs:
     output_dir/
@@ -25,6 +28,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from runvault.read import figures_dir, runvault_path, sweep_events_table
 
 plt.rcParams["font.family"] = "Hiragino Sans"
 
@@ -33,11 +37,13 @@ BIAS_ORDER = ["none", "weak", "strong"]
 
 
 def load_summary(sweep_dir: str) -> pd.DataFrame:
-    """sweep_summary.csv を読み込む．"""
-    path = os.path.join(sweep_dir, "sweep_summary.csv")
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"sweep_summary.csv が見つかりません: {path}")
-    return pd.read_csv(path)
+    """1 行 1 試行の表を，スイープ親 run の子の終端イベントから組み直す．
+
+    runvault はこの表をディスク上に持たない (旧 `sweep_summary.csv` に相当)．条件
+    (bias / framing / topology) は子 run の `parameters` が，試行ごとの最終値は
+    `events.jsonl` の `terminal` 行が持つ．
+    """
+    return sweep_events_table(sweep_dir, ["bias", "framing", "topology"], kind="terminal")
 
 
 def _ordered_biases(df: pd.DataFrame) -> list[str]:
@@ -127,16 +133,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Chuang et al. (2024) LLM 意見力学 スイープ結果 可視化スクリプト",
     )
     p.add_argument(
-        "--sweep_dir",
         "--sweep-dir",
-        default="results/latest",
-        help="スイープ出力ディレクトリ (default: results/latest)",
+        "--sweep_dir",
+        default=None,
+        help=(
+            "スイープ親 run のディレクトリ．未指定時は runvault に最新の sweep を聞く "
+            "(--experiment chuang --subcommand sweep)．"
+        ),
     )
     p.add_argument(
-        "--output_dir",
+        "--results-root",
+        "--results_root",
+        default="results",
+        help="--sweep-dir 未指定時に runvault が探す results ルート (default: results)",
+    )
+    p.add_argument(
         "--output-dir",
+        "--output_dir",
         default=None,
-        help="図の保存先ディレクトリ (default: {sweep_dir}/figures)",
+        help="図の保存先ディレクトリ (default: results/chuang/figures/{run_slug})",
     )
     return p.parse_args(argv)
 
@@ -144,16 +159,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
 
-    out_dir = args.output_dir if args.output_dir else os.path.join(args.sweep_dir, "figures")
+    sweep_dir = args.sweep_dir
+    if sweep_dir is None:
+        sweep_dir = runvault_path("chuang", args.results_root, subcommand="sweep")
+
+    out_dir = args.output_dir if args.output_dir else figures_dir(sweep_dir)
     os.makedirs(out_dir, exist_ok=True)
 
     print("=== Chuang et al. (2024) LLM 意見力学 スイープ可視化 ===")
-    print(f"スイープ: {args.sweep_dir}")
+    print(f"スイープ: {sweep_dir}")
     print(f"出力先:   {out_dir}")
     print("-------------------------------------------------")
 
-    print("[1/4] sweep_summary.csv を読み込み中 ...")
-    df = load_summary(args.sweep_dir)
+    print("[1/4] 子 run の終端イベントを読み込み中 ...")
+    df = load_summary(sweep_dir)
     print(f"      bias {df['bias'].nunique()} 種 × topology {df['topology'].nunique()} 種")
 
     print("[2/4] Diversity D ヒートマップを保存中 ...")

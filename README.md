@@ -13,7 +13,7 @@ LLM output is **outside** socsim's bit-reproducibility. The design therefore spl
 - **Deterministic socsim core** — network generation, speaker/listener sampling (`ctx.rng`, ChaCha20), scheduling, metrics and convergence. Given a seed this reproduces bit-for-bit.
 - **Non-deterministic LLM layer** — tweet generation, sentiment report and opinion classification. Pseudo-determinised by `socsim-llm`'s `CachingClient` (a `hash(prompt+model)` → response cache), `temperature=0` and a fixed seed. The provider order is **Ollama first → OpenAI fallback** via `socsim-llm`'s `FallbackClient`.
 
-The cache — not the model — is the reproducibility mechanism: a warm cache replays identical responses, so a rerun is free and stable. Each run writes `run_metadata.json` recording the model, endpoint, temperature, seed and cache-hit rate. Because the local default model (`llama3.2`) differs from the paper's `gpt-3.5-turbo`, reproduction targets are **qualitative** (consensus tendency, sign of the bias `B`, monotone increase of diversity `D` with confirmation bias), not exact numbers.
+The cache — not the model — is the reproducibility mechanism: a warm cache replays identical responses, so a rerun is free and stable. Each run records the model, provider and temperature in the `llm` block of its runvault `run.json`, and the call count and cache-hit rate as run-scope metrics. Because the local default model (`llama3.2`) differs from the paper's `gpt-3.5-turbo`, reproduction targets are **qualitative** (consensus tendency, sign of the bias `B`, monotone increase of diversity `D` with confirmation bias), not exact numbers.
 
 ## Install & Quick start
 
@@ -38,7 +38,7 @@ uv sync
 uv run chuang-tools visualize
 
 # Inspect the run's settings and LLM metadata
-uv run chuang-tools show-experiment-settings --results-dir results/latest
+uv run chuang-tools show-experiment-settings
 ```
 
 ## Documentation
@@ -54,7 +54,7 @@ This repository implements the core dyadic LLM opinion-update model on a network
 
 - `run` — a single configuration, with a `--control no-interaction` arm (agents evolve in isolation, never seeing neighbours) and an offline `--mock` mode.
 - `sweep` — a grid over confirmation-bias × framing × topology (`full` / `er` / `ws` / `ba`).
-- `reproduce` — a one-command reproduction of the paper's headline findings: the bias × control matrix (no bias → truthful consensus; strong bias → fragmentation; the non-interaction control isolating social influence from the LLM's intrinsic drift) and a topology comparison, with observed-vs-paper anchors written to `reproduce_summary.json`.
+- `reproduce` — a one-command reproduction of the paper's headline findings: the bias × control matrix (no bias → truthful consensus; strong bias → fragmentation; the non-interaction control isolating social influence from the LLM's intrinsic drift) and a topology comparison, with the observed-vs-paper anchors recorded as run-scope metrics and `x.chuang2024.anchor` events.
 - Python `chuang-tools`: `visualize` / `visualize-sweep` / `show-experiment-settings` / `reproduce` (renders the reproduction figures).
 
 The opinion classifier supports a `reflective` memory mode label; the current update path uses the `cumulative` memory documented above. Reflective-memory summarisation is a clean extension point.

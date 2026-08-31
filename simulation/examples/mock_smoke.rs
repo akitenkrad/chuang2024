@@ -1,38 +1,46 @@
 //! Mock 駆動のスモーク実行 (ライブ LLM 不要)．
 //!
 //! ライブ Ollama/OpenAI が使えない環境 (CI・ネットワーク遮断サンドボックス) で
-//! 出力パイプライン (opinions.csv / metrics.csv / run_metadata.json) と Python
-//! 可視化を検証するための補助バイナリ．`socsim-llm::mock::ScriptedClient` で
-//! 決定論的に意見更新を駆動し，本番 `run` と同じ writer で結果を書き出す．
+//! 出力パイプライン (run ディレクトリ・metrics.csv・events.jsonl・artifacts/
+//! opinions.csv) と Python 可視化を検証するための補助バイナリ．
+//! `socsim-llm::mock::ScriptedClient` で決定論的に意見更新を駆動する．
 //!
 //! ```bash
 //! cargo run --release --example mock_smoke -- results
 //! ```
 
 use std::env;
-
-use socsim_results::{refresh_latest_symlink, timestamp, write_json};
+use std::fs;
 
 use chuang_opinion_simulation::config::Config;
 use chuang_opinion_simulation::llm::wrap_client;
-use chuang_opinion_simulation::simulation::{
-    ensure_output_dir, run_with_client, save_metrics, save_opinions, save_run_metadata,
-};
+use chuang_opinion_simulation::record::{self, DOMAIN, EXPERIMENT, REPO_ID};
+use chuang_opinion_simulation::simulation::{run_with_client, save_opinions};
+use runvault::{Run, RunOptions};
+use serde::Serialize;
 use socsim_llm::mock::ScriptedClient;
 use socsim_llm::PromptCache;
 
+/// スモーク実行の実験条件．
+#[derive(Serialize)]
+struct SmokeParameters {
+    n_agents: usize,
+    max_steps: usize,
+    events_per_step: usize,
+    tol: f64,
+    seed: u64,
+}
+
 fn main() {
     let base = env::args().nth(1).unwrap_or_else(|| "results".to_string());
-    let timestamp = timestamp();
-    let output_dir = format!("{base}/{timestamp}");
+    let seed = 42u64;
 
     let cfg = Config {
         n_agents: 6,
         max_steps: 12,
         events_per_step: 2,
         tol: 1e-9,
-        seed: Some(42),
-        output_dir: output_dir.clone(),
+        seed: Some(seed),
         ..Config::default()
     };
 
@@ -51,22 +59,52 @@ fn main() {
         }
     });
     let client = wrap_client(backend, PromptCache::in_memory());
+    // モデル名と endpoint は Run::start より前に要る (llm ブロックは開始時に確定する)．
+    let model = client.inner().model().to_string();
+    let endpoint = client.inner().endpoint().to_string();
 
-    ensure_output_dir(&cfg.output_dir);
+    let parameters = SmokeParameters {
+        n_agents: cfg.n_agents,
+        max_steps: cfg.max_steps,
+        events_per_step: cfg.events_per_step,
+        tol: cfg.tol,
+        seed,
+    };
+
+    let mut rv = Run::start(
+        RunOptions::new(EXPERIMENT, "mock-smoke")
+            .repo_id(REPO_ID)
+            .domain(DOMAIN)
+            .results_root(&base)
+            .parameters(&parameters)
+            .expect("runvault: parameters の組み立てに失敗")
+            .seed_pointers(["/seed"])
+            .master_seed(seed)
+            .llm(record::llm_block(&model, &endpoint, cfg.llm.temperature))
+            .replication(record::replication()),
+    )
+    .expect("runvault: run の開始に失敗");
+
+    let artifacts = rv.dir().join("artifacts");
+    fs::create_dir_all(&artifacts).expect("artifacts ディレクトリの作成に失敗");
+
     let result = run_with_client(&cfg, client).expect("mock run failed");
-    save_metrics(&result.metrics_history, &cfg.output_dir);
-    save_opinions(&result, &cfg.output_dir);
-    save_run_metadata(&result, &cfg, &cfg.output_dir);
-
-    // config.json (socsim_results::write_json に委譲)．
-    let cfg_path = format!("{}/config.json", cfg.output_dir);
-    write_json(&cfg.to_run_config_json(), &cfg_path).unwrap();
-
-    // latest symlink (socsim_results に委譲)．
-    let _ = refresh_latest_symlink(&base, &timestamp);
+    save_opinions(&result, &artifacts.to_string_lossy());
+    record::log_simulation(&mut rv, &result);
+    let observed: Vec<u64> = result.metrics_history.iter().map(|m| m.t as u64).collect();
+    record::log_terminal(
+        &mut rv,
+        "run",
+        seed,
+        cfg.max_steps,
+        cfg.tol,
+        observed,
+        &result,
+    );
 
     let last = result.metrics_history.last().unwrap();
-    println!("mock smoke wrote: {output_dir}");
+    let dir = rv.finish().expect("runvault: run の完了に失敗");
+    println!("mock smoke wrote: {}", dir.display());
     println!(
         "final B={:.3} D={:.3} n_clusters={} steps={}",
         last.bias, last.diversity, last.n_clusters, result.final_step

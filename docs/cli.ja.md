@@ -56,12 +56,15 @@ cargo run --release -- run --control no-interaction --bias none --seed 42
 | `--cache-path` | `.llm_cache/cache.json` | プロンプト→応答キャッシュファイル (gitignore 対象) |
 | `--output-dir` | `results` | 出力ベースディレクトリ |
 
-出力は `results/{timestamp}/` に書かれ，`results/latest` が貼り直される:
+出力は runvault の run ディレクトリ `results/chuang/run_{timestamp}_{hash}/` へ書かれる．ディレクトリの作成と命名は runvault が持ち，`latest` シンボリックリンクは作らない．場所は `runvault path --experiment chuang --latest --subcommand run --standalone` で解決する．
 
-- `config.json` — 実行設定一式．
-- `opinions.csv` — long-format `t, agent_id, opinion[, text]`．`text` 列は最終ステップのみ各エージェントの最終ツイートを格納する (途中ツイートはファイル肥大化を避けて省略)．
-- `metrics.csv` — `t, variance, bias, diversity, n_clusters, polarization`．
-- `run_metadata.json` — LLM モデル / endpoint / 温度 / seed / 呼び出し総数 / cache-hit / cache-hit 率 と決定論注記．
+- `config.json` — 封筒．実行条件は `parameters` の下．
+- `run.json` — 同一性 (repo・git commit・各種ハッシュ・`master_seed`・`llm` ブロック (provider / model / 温度)・対象論文のメタデータ)．
+- `metrics.csv` — long-format `run_uid, step, step_unit, scope, name, value`．ステップごと (`step_unit=step`, `scope=run`) に `variance` / `bias` / `diversity` / `n_clusters` / `polarization` — 旧 wide な `metrics.csv` の列を同じ名前のまま持つ．ステップを持たない値として `converged` / `final_step` / `llm_calls` / `llm_cache_hits` / `llm_cache_hit_rate`．
+- `events.jsonl` — ステップごとの `observation` と，run 1 本の `terminal` 行 (収束・打ち切り・上限・シード・最終 `bias` / `diversity` / `variance` / `n_clusters` / `polarization`)．
+- `artifacts/opinions.csv` — long-format `t, agent_id, opinion[, text]`．`text` 列は最終ステップのみ各エージェントの最終ツイートを格納する (途中ツイートはファイル肥大化を避けて省略)．
+
+実行時間は指標にしない．`status.json` の `duration_sec` が正本である．
 
 ## `sweep` — 確証バイアス × フレーミング × トポロジ
 
@@ -92,10 +95,12 @@ cargo run --release -- sweep \
 | `--cache-path` | `.llm_cache/cache.json` | sweep 全体で共有するキャッシュ (ヒット率を上げる) |
 | `--output-dir` | `results` | 出力ベースディレクトリ |
 
-出力は `results/{timestamp}_sweep/` に:
+sweep は «親 1 本 + 条件ごとの子» になる:
 
-- `sweep_summary.csv` — `(bias, framing, topology, run)` ごとに `final_bias` / `final_diversity` / `final_variance` / `n_clusters` / `polarization` / `convergence_time` / `converged` / `cache_hit_rate` を 1 行．
-- `sweep_config.json` — sweep 格子と共通パラメータ．
+- 親 (`subcommand=sweep`) は格子の定義そのものを `parameters` に持ち，個別条件の指標は持たない．1 本のシミュレーションではないので `master_seed` を名乗らない．
+- 子 (`subcommand=sweep-point`) は «その条件の試行群» である．`parameters` が `bias` / `framing` / `topology` / `memory` を，`events.jsonl` が試行ごとの `terminal` 行 (`trial_seed` / `convergence_time` / `final_bias` / `final_diversity` / `final_variance` / `n_clusters` / `polarization` / `cache_hit_rate` — 旧 `sweep_summary.csv` の列) を，`metrics.csv` が条件の集約を `scope=run` で持つ．
+
+試行ごとの値は `metrics.csv` には置けない．主キーが `(run_uid, name, step, step_unit, scope)` なので，同一条件の `runs` 本が重複するためである．散らばりが要る図は `events.jsonl` から組み直す．
 
 コンソールは確証バイアス別の平均 Diversity `D̄` を表示する．論文の核心は `D̄` が `none → weak → strong` で単調増大することである．
 
@@ -134,10 +139,10 @@ cargo run --release -- reproduce --cache-path .llm_cache/cache.json --seed 42
 | `--cache-path` | `.llm_cache/cache.json` | 共有プロンプトキャッシュ (ライブ時のみ) |
 | `--output-dir` | `results` | 出力ベースディレクトリ |
 
-出力は `results/reproduce_{timestamp}/` に:
+出力は 1 本の run ディレクトリ (`subcommand=reproduce`) に:
 
-- `reproduce_summary.json` — bias × control 行列，topology 比較，アンカー表 (観測 vs 論文 + `PASS` / `OFF`)．
-- `metrics_{condition}.csv` — 条件ごとの代表 run のメトリクス履歴 (Python `reproduce` が `D` 時系列の描画に使う)．
+- `metrics.csv` — 条件ごとのセル集約 (`{condition}_mean_final_bias` / `_mean_final_diversity` / `_mean_final_clusters` / `_mean_diversity_drop` / `_mean_final_step`) を `scope=run` で，代表 run のステップごとの履歴を `{condition}_variance` … `{condition}_polarization` として持つ．9 条件が 1 本の run に同居し `(step, scope, name)` が主キーなので，条件ラベルを名前に畳み込む．アンカーの観測量は `anchor_{id}`，件数は `checks_passed` / `checks_total`．
+- `events.jsonl` — アンカーごとの `x.chuang2024.anchor` 行 (帯と `PASS` / `OFF`)．比較の向きと判定はカテゴリであって数ではないので指標にできない．帯は論文の報告値ではなく **この再現実装が置いた** 定性的アンカーなので，`reference.csv` には書かない．
 
 Python `chuang-tools reproduce` はこのサマリを読んで図を描く．[可視化](visualization.ja.md) を参照．
 

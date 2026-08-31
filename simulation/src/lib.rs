@@ -4,8 +4,9 @@
 //! socsim フレームワーク上に構築した LLM 駆動の意見力学の公開 API を提供する．
 //! 設定 (`config`)・世界状態 (`world`)・LLM クライアント層 (`llm`)・プロンプト
 //! 生成 (`prompts`)・意見分類器 `f_oc` (`classifier`)・更新メカニズム
-//! (`mechanisms`)・実行ドライバ (`simulation`)・集計メトリクス (`metrics`) を
-//! モジュールとして公開し，バイナリ (`chuang`) と統合テストの双方から利用する．
+//! (`mechanisms`)・実行ドライバ (`simulation`)・集計メトリクス (`metrics`)・
+//! runvault への記録 (`record`) をモジュールとして公開し，バイナリ (`chuang`) と
+//! 統合テストの双方から利用する．
 //!
 //! # 二層決定論
 //!
@@ -20,6 +21,7 @@ pub mod llm;
 pub mod mechanisms;
 pub mod metrics;
 pub mod prompts;
+pub mod record;
 pub mod reproduce_mock;
 pub mod simulation;
 pub mod world;

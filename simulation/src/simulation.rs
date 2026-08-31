@@ -17,14 +17,13 @@ use std::rc::Rc;
 
 use csv::Writer;
 use rand::Rng;
-use serde::Serialize;
 
 use socsim_core::{derive_seed, AgentId, SimRng};
 use socsim_engine::{SequentialScheduler, SimulationBuilder};
 use socsim_llm::{LlmClient, MetadataCollector};
 
 use crate::config::{Config, Topology};
-use crate::llm::{build_live_client, OpinionClient};
+use crate::llm::OpinionClient;
 use crate::mechanisms::{
     LLMOpinionUpdateMechanism, MetricsMechanism, SharedClient, SharedMetadata,
 };
@@ -107,17 +106,6 @@ pub fn init_world(cfg: &Config, rng: &mut SimRng) -> OpinionWorld {
         cfg.interact,
         cfg.max_steps as u64,
     )
-}
-
-/// シミュレーションを実行する (本番 LLM クライアントを構築して駆動)．
-///
-/// `OLLAMA_*` / `OPENAI_*` 環境変数から «Ollama 第一 → OpenAI フォールバック +
-/// キャッシュ» クライアントを構築し，[`run_with_client`] へ委譲する．
-pub fn run(cfg: &Config) -> Result<SimulationResult, String> {
-    // build_live_client が cfg.llm.cache_path から (在れば) JSON キャッシュを開く．
-    let client =
-        build_live_client(&cfg.llm).map_err(|e| format!("LLM クライアント構築に失敗: {e}"))?;
-    run_with_client(cfg, client)
 }
 
 /// オフライン (LLM 不要) の決定論的 mock でシミュレーションを実行する．
@@ -248,67 +236,6 @@ pub fn save_opinions(result: &SimulationResult, output_dir: &str) {
         }
     }
     wtr.flush().expect("フラッシュに失敗");
-}
-
-/// メトリクス履歴を CSV に保存する．
-///
-/// 書き出し機構は `socsim_results::write_csv` に委譲する (各行を `serialize` し
-/// 先頭行にヘッダを書く csv クレットの標準挙動; 従来の手書き writer とバイト等価)．
-/// 行構造体 [`Metrics`] は repo 固有のままで，writer だけを共有化する．
-pub fn save_metrics(metrics: &[Metrics], output_dir: &str) {
-    let path = format!("{}/metrics.csv", output_dir);
-    socsim_results::write_csv(metrics, &path).expect("metrics.csv の書き込みに失敗");
-}
-
-/// `run_metadata.json` の構造体 (LLM モデル・endpoint・温度・seed・cache 統計)．
-#[derive(Serialize)]
-pub struct RunMetadataJson {
-    /// LLM モデル名 (primary)．
-    pub llm_model: String,
-    /// LLM endpoint (primary)．
-    pub llm_endpoint: String,
-    /// 生成温度．
-    pub llm_temperature: f32,
-    /// 生成シード．
-    pub llm_seed: u64,
-    /// LLM 呼び出し総数．
-    pub total_calls: usize,
-    /// キャッシュヒット数．
-    pub cache_hits: usize,
-    /// キャッシュヒット率 ∈ [0,1]．
-    pub cache_hit_rate: f64,
-    /// LLM 出力は socsim の bit 再現性の外側にあることの明示注記．
-    pub determinism_note: &'static str,
-}
-
-/// `run_metadata.json` を保存する．
-pub fn save_run_metadata(result: &SimulationResult, cfg: &Config, output_dir: &str) {
-    let meta = RunMetadataJson {
-        llm_model: result.llm_model.clone(),
-        llm_endpoint: result.llm_endpoint.clone(),
-        llm_temperature: cfg.llm.temperature,
-        llm_seed: cfg.llm.seed,
-        total_calls: result.metadata.total(),
-        cache_hits: result.metadata.cache_hits(),
-        cache_hit_rate: result.metadata.cache_hit_rate(),
-        determinism_note: "LLM output is outside socsim bit-reproducibility; the prompt->response \
-                           cache (with temperature=0 and fixed seed) is the reproducibility \
-                           mechanism. The socsim core (network, pair selection, scheduling, \
-                           metrics) is deterministic given the seed.",
-    };
-    // pretty-print JSON の書き出しは socsim_results::write_json に委譲する
-    // (内部は serde_json::to_writer_pretty + flush; 従来の writer とバイト等価)．
-    // model/endpoint/temperature/seed の値は従来どおり result / cfg から採り，
-    // RunMetadataJson の構造 (フィールド名・順序・determinism_note) を保持する
-    // (`MetadataCollector::summary()` は cache-hit 100% 再実行や呼び出し 0 件で
-    // endpoint/model が変わりうるため，バイト等価のためここでは使わない)．
-    let path = format!("{}/run_metadata.json", output_dir);
-    socsim_results::write_json(&meta, &path).expect("run_metadata.json の書き込みに失敗");
-}
-
-/// 出力ディレクトリを作成する．
-pub fn ensure_output_dir(output_dir: &str) {
-    socsim_results::ensure_dir(output_dir).expect("出力ディレクトリの作成に失敗");
 }
 
 #[cfg(test)]

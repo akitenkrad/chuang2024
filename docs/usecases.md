@@ -63,7 +63,7 @@ uv run chuang-tools visualize-sweep
 The first run populates `.llm_cache/cache.json`. Re-running an identical configuration replays cached responses — no live LLM calls, so it is fast, free and stable. Check the cache-hit rate:
 
 ```bash
-uv run chuang-tools show-experiment-settings --results-dir results/latest
+uv run chuang-tools show-experiment-settings
 ```
 
 A second identical run should report a high cache-hit rate and few/zero new calls.
