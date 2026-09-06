@@ -22,7 +22,7 @@ use std::fs;
 use std::path::Path;
 
 use clap::{Parser, Subcommand};
-use runvault::{Lineage, Run, RunOptions};
+use runvault::{Lineage, Run, RunOptions, Stage};
 use serde::Serialize;
 
 use chuang_opinion_simulation::config::{
@@ -32,7 +32,9 @@ use chuang_opinion_simulation::config::{
 use chuang_opinion_simulation::llm::{build_live_client, OpinionClient};
 use chuang_opinion_simulation::record::{self, DOMAIN, EXPERIMENT, REPO_ID};
 use chuang_opinion_simulation::reproduce_mock::build_reproduce_client;
-use chuang_opinion_simulation::simulation::{run_with_client, save_opinions, SimulationResult};
+use chuang_opinion_simulation::simulation::{
+    run_with_client_observed, save_opinions, SimulationResult,
+};
 
 // ---------------------------------------------------------------------------
 // CLI 定義
@@ -506,7 +508,17 @@ fn cmd_run(args: RunArgs) {
     println!("出力先: {}", rv.dir().display());
     println!("-------------------------------------------------");
 
-    let result = run_with_client(&cfg, client).unwrap_or_else(|e| panic!("実行に失敗: {}", e));
+    // 進捗の 1 単位は 1 ステップ．費用がそこにあるからで，1 ステップは
+    // `events_per_step` 本のツイートをモデルから引く．試行 1 本を 1 単位にすると
+    // ライブの 1 本は 0/1 と出したきり終わりまで黙る．収束すれば max_steps に
+    // 届かずに閉じるが，それは «達した数» を報告しているだけで，100% を超える
+    // ことはない．
+    let mut stage = rv.stage("steps", cfg.max_steps);
+    let result = run_with_client_observed(&cfg, client, |_| stage.tick())
+        .unwrap_or_else(|e| panic!("実行に失敗: {}", e));
+    // manifest.csv は finish() で封をされる．その後に 1 行足せば，manifest が
+    // 食い違うダイジェストを持つことになる．
+    stage.close();
 
     save_opinions(&result, &artifacts.to_string_lossy());
     record::log_simulation(&mut rv, &result);
@@ -637,6 +649,12 @@ fn cmd_sweep(args: SweepArgs) {
     println!("出力先: {}", parent.dir().display());
     println!("-----------------------------------------------------------");
 
+    // グリッド全体で stage を 1 つ．条件ごとに開け直すと小さな 100% が並ぶだけで，
+    // スイープ全体のどこにいるかは分からない．掃引しているのはバイアス・フレーミング・
+    // トポロジで，どれも 1 ステップの仕事の量を変えない (エージェント数も
+    // events_per_step も固定) ので，重みではなく数える．
+    let mut stage = parent.stage("steps", n_total * args.max_steps);
+
     let mut done = 0usize;
     // 条件ごとの平均 Diversity D / Bias B (単調増大の確認用; 表示のためだけに持つ)．
     let mut per_bias: Vec<(ConfirmationBias, Vec<f64>, Vec<f64>)> = biases
@@ -722,7 +740,7 @@ fn cmd_sweep(args: SweepArgs) {
 
                     let client = build_live_client(&cfg.llm)
                         .unwrap_or_else(|e| panic!("LLM クライアント構築に失敗: {e}"));
-                    let result = run_with_client(&cfg, client)
+                    let result = run_with_client_observed(&cfg, client, |_| stage.tick())
                         .unwrap_or_else(|e| panic!("実行に失敗: {}", e));
 
                     // sweep が見るのは各試行の最終ステップだけなので，観測時刻もそこ 1 点．
@@ -759,6 +777,8 @@ fn cmd_sweep(args: SweepArgs) {
             }
         }
     }
+
+    stage.close();
 
     let parent_dir = parent
         .finish()
@@ -815,6 +835,7 @@ struct ReproCell {
 #[allow(clippy::too_many_arguments)]
 fn run_repro_cell(
     rv: &mut Run,
+    stage: &mut Stage,
     label: &str,
     bias: ConfirmationBias,
     interact: bool,
@@ -841,8 +862,8 @@ fn run_repro_cell(
             ..base.clone()
         };
         let (cfg, client, _, _) = build_client(&cfg, mock);
-        let result: SimulationResult =
-            run_with_client(&cfg, client).unwrap_or_else(|e| panic!("実行に失敗 ({label}): {e}"));
+        let result: SimulationResult = run_with_client_observed(&cfg, client, |_| stage.tick())
+            .unwrap_or_else(|e| panic!("実行に失敗 ({label}): {e}"));
 
         let first = result.metrics_history.first().unwrap();
         let last = result.metrics_history.last().unwrap();
@@ -1010,6 +1031,13 @@ fn cmd_reproduce(args: ReproduceArgs) {
         ConfirmationBias::Weak,
         ConfirmationBias::Strong,
     ];
+    // 2 つの段（バイアス×統制の行列とトポロジ比較）で 1 つの stage．どのセルも
+    // `runs` 本の試行を `max_steps` ステップまで回すだけで，仕事の量は同じなので
+    // 数える．セルごとに開け直すと 9 個の小さな 100% になり，reproduce 全体の
+    // どこにいるかは分からない．
+    let n_repro_cells = biases.len() * 2 + topologies.len();
+    let mut stage = rv.stage("steps", n_repro_cells * runs * max_steps);
+
     let mut bias_cells: Vec<ReproCell> = Vec::new();
     for &b in &biases {
         for &interact in &[true, false] {
@@ -1017,6 +1045,7 @@ fn cmd_reproduce(args: ReproduceArgs) {
             let label = format!("bias-{}_{}", b.label(), arm);
             let cell = run_repro_cell(
                 &mut rv,
+                &mut stage,
                 &label,
                 b,
                 interact,
@@ -1037,6 +1066,7 @@ fn cmd_reproduce(args: ReproduceArgs) {
         let label = format!("topo-{}", topo.label());
         let cell = run_repro_cell(
             &mut rv,
+            &mut stage,
             &label,
             ConfirmationBias::None,
             true,
@@ -1049,6 +1079,8 @@ fn cmd_reproduce(args: ReproduceArgs) {
         log_repro_cell(&mut rv, &cell);
         topo_cells.push(cell);
     }
+
+    stage.close();
 
     // --- アンカー評価 (論文の定性的知見) ---
     fn cell<'a>(cells: &'a [ReproCell], label: &str) -> &'a ReproCell {

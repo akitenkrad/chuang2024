@@ -129,6 +129,23 @@ pub fn run_mock(cfg: &Config) -> Result<SimulationResult, String> {
 /// メカニズムと `Rc<RefCell<…>>` で共有し，実行後にキャッシュ保存・メタデータ集計
 /// に使う．
 pub fn run_with_client(cfg: &Config, client: OpinionClient) -> Result<SimulationResult, String> {
+    run_with_client_observed(cfg, client, |_| {})
+}
+
+/// The same, calling `on_step` once for every simulated step.
+///
+/// The callback is where a caller counts its progress. A step is the unit
+/// because it is the unit the cost is in: one step draws `events_per_step`
+/// tweets from the model. A whole trial would be a single tick, which is the
+/// granularity that leaves a live run silent for an hour.
+///
+/// It is given the step number rather than nothing so a caller can report
+/// against the clock rather than against its own tally.
+pub fn run_with_client_observed(
+    cfg: &Config,
+    client: OpinionClient,
+    mut on_step: impl FnMut(usize),
+) -> Result<SimulationResult, String> {
     let root = cfg.seed.unwrap_or_else(rand::random);
 
     // 初期世界 (root から派生した init RNG; 決定論的 socsim コア層)．
@@ -173,6 +190,7 @@ pub fn run_with_client(cfg: &Config, client: OpinionClient) -> Result<Simulation
         opinion_history.push(opinions);
         converged = *report.scratch.get::<bool>("converged").unwrap_or(&false);
         final_step = t;
+        on_step(t);
     })
     .map_err(|e| format!("シミュレーションの実行に失敗: {e}"))?;
 
