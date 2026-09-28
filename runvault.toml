@@ -1,3 +1,900 @@
-# Metric descriptions are not written yet (MYTASK-3382). Until they are,
-# runvault records undeclared metrics instead of refusing them.
-require_docs = false
+# 指標が何を測っているか (runvault の宣言．rs-runvault docs/metrics.ja.md)．
+#
+# 名前は `simulation/src/record.rs` と `simulation/src/main.rs` が書いているものと
+# 一致していなければならない．`reproduce` は条件ラベルを接頭辞として
+# `format!` で名前を作るため，bias × control の 6 条件と topology の 4 条件に
+# 取りうる名前をすべて展開している．
+#
+# 意見平均・多様性・分極は模型の記述量であり，値の大小を成績としないため
+# `direction = "none"` とする．
+
+# --- 単一 run のステップ指標 ---------------------------------------------
+
+[metrics."variance"]
+meaning   = "5 段階意見値の母分散"
+unit      = "opinion_squared"
+direction = "none"
+range     = [0.0, 4.0]
+scope     = ["run"]
+
+[metrics."bias"]
+meaning   = "5 段階意見値の平均 B"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."diversity"]
+meaning   = "5 段階意見値の標準偏差 D"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."n_clusters"]
+meaning   = "そのステップで占有されている相異なる意見水準の数"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."polarization"]
+meaning   = "意見の絶対値平均を意見空間の半径 2 で正規化した分極度"
+unit      = "ratio"
+direction = "none"
+range     = [0.0, 1.0]
+scope     = ["run"]
+
+# --- 単一 run 全体と LLM の呼び出し --------------------------------------
+
+[metrics."converged"]
+meaning   = "意見分散が収束しきい値を下回って停止したなら 1，打ち切りなら 0"
+unit      = "boolean"
+direction = "none"
+range     = [0.0, 1.0]
+scope     = ["run"]
+
+[metrics."final_step"]
+meaning   = "停止したときの最終ステップ番号"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+[metrics."llm_calls"]
+meaning   = "この run が行った LLM の呼び出し回数"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+[metrics."llm_cache_hits"]
+meaning   = "LLM 呼び出しのうちキャッシュで応答した回数"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+[metrics."llm_cache_hit_rate"]
+meaning   = "LLM 呼び出しのうちキャッシュで応答した割合"
+unit      = "ratio"
+direction = "up"
+range     = [0.0, 1.0]
+scope     = ["run"]
+
+# --- sweep セルの試行平均 -------------------------------------------------
+
+[metrics."n_converged"]
+meaning   = "セル内で収束した試行の本数"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+[metrics."convergence_rate"]
+meaning   = "セル内の試行群のうち収束したものの割合"
+unit      = "ratio"
+direction = "none"
+range     = [0.0, 1.0]
+scope     = ["run"]
+
+[metrics."mean_final_bias"]
+meaning   = "セル内の試行群にわたる最終意見平均 B の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."mean_final_diversity"]
+meaning   = "セル内の試行群にわたる最終 Diversity D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."mean_final_variance"]
+meaning   = "セル内の試行群にわたる最終意見分散の平均"
+unit      = "opinion_squared"
+direction = "none"
+range     = [0.0, 4.0]
+scope     = ["run"]
+
+[metrics."mean_n_clusters"]
+meaning   = "セル内の試行群にわたる最終意見水準数の平均"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."mean_polarization"]
+meaning   = "セル内の試行群にわたる最終分極度の平均"
+unit      = "ratio"
+direction = "none"
+range     = [0.0, 1.0]
+scope     = ["run"]
+
+[metrics."mean_final_step"]
+meaning   = "セル内の試行群にわたる停止ステップの平均"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+# --- reproduce の条件別時系列と集約 --------------------------------------
+#
+# 条件ラベルは `simulation/src/main.rs` の `scenarios_spec` と topology 列挙から
+# 決まり，アンダースコアを含む 1 区画名なので metric_patterns では安全に分解できない．
+
+# バイアス無し・相互作用あり条件
+
+[metrics."bias-none_interact_variance"]
+meaning   = "バイアス無し・相互作用あり条件の代表試行における 5 段階意見値の母分散"
+unit      = "opinion_squared"
+direction = "none"
+range     = [0.0, 4.0]
+scope     = ["run"]
+
+[metrics."bias-none_interact_bias"]
+meaning   = "バイアス無し・相互作用あり条件の代表試行における 5 段階意見値の平均 B"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-none_interact_diversity"]
+meaning   = "バイアス無し・相互作用あり条件の代表試行における 5 段階意見値の標準偏差 D"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-none_interact_n_clusters"]
+meaning   = "バイアス無し・相互作用あり条件の代表試行で占有されている相異なる意見水準の数"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."bias-none_interact_polarization"]
+meaning   = "バイアス無し・相互作用あり条件の代表試行における正規化分極度"
+unit      = "ratio"
+direction = "none"
+range     = [0.0, 1.0]
+scope     = ["run"]
+
+[metrics."bias-none_interact_mean_final_bias"]
+meaning   = "バイアス無し・相互作用あり条件の試行群にわたる最終意見平均 B の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-none_interact_mean_final_diversity"]
+meaning   = "バイアス無し・相互作用あり条件の試行群にわたる最終 Diversity D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-none_interact_mean_final_clusters"]
+meaning   = "バイアス無し・相互作用あり条件の試行群にわたる最終意見水準数の平均"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."bias-none_interact_mean_diversity_drop"]
+meaning   = "バイアス無し・相互作用あり条件の試行群にわたる初期 D − 最終 D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-none_interact_mean_final_step"]
+meaning   = "バイアス無し・相互作用あり条件の試行群にわたる停止ステップの平均"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+# バイアス無し・非相互作用統制条件
+
+[metrics."bias-none_control_variance"]
+meaning   = "バイアス無し・非相互作用統制条件の代表試行における 5 段階意見値の母分散"
+unit      = "opinion_squared"
+direction = "none"
+range     = [0.0, 4.0]
+scope     = ["run"]
+
+[metrics."bias-none_control_bias"]
+meaning   = "バイアス無し・非相互作用統制条件の代表試行における 5 段階意見値の平均 B"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-none_control_diversity"]
+meaning   = "バイアス無し・非相互作用統制条件の代表試行における 5 段階意見値の標準偏差 D"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-none_control_n_clusters"]
+meaning   = "バイアス無し・非相互作用統制条件の代表試行で占有されている相異なる意見水準の数"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."bias-none_control_polarization"]
+meaning   = "バイアス無し・非相互作用統制条件の代表試行における正規化分極度"
+unit      = "ratio"
+direction = "none"
+range     = [0.0, 1.0]
+scope     = ["run"]
+
+[metrics."bias-none_control_mean_final_bias"]
+meaning   = "バイアス無し・非相互作用統制条件の試行群にわたる最終意見平均 B の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-none_control_mean_final_diversity"]
+meaning   = "バイアス無し・非相互作用統制条件の試行群にわたる最終 Diversity D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-none_control_mean_final_clusters"]
+meaning   = "バイアス無し・非相互作用統制条件の試行群にわたる最終意見水準数の平均"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."bias-none_control_mean_diversity_drop"]
+meaning   = "バイアス無し・非相互作用統制条件の試行群にわたる初期 D − 最終 D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-none_control_mean_final_step"]
+meaning   = "バイアス無し・非相互作用統制条件の試行群にわたる停止ステップの平均"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+# 弱い確証バイアス・相互作用あり条件
+
+[metrics."bias-weak_interact_variance"]
+meaning   = "弱い確証バイアス・相互作用あり条件の代表試行における 5 段階意見値の母分散"
+unit      = "opinion_squared"
+direction = "none"
+range     = [0.0, 4.0]
+scope     = ["run"]
+
+[metrics."bias-weak_interact_bias"]
+meaning   = "弱い確証バイアス・相互作用あり条件の代表試行における 5 段階意見値の平均 B"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-weak_interact_diversity"]
+meaning   = "弱い確証バイアス・相互作用あり条件の代表試行における 5 段階意見値の標準偏差 D"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-weak_interact_n_clusters"]
+meaning   = "弱い確証バイアス・相互作用あり条件の代表試行で占有されている相異なる意見水準の数"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."bias-weak_interact_polarization"]
+meaning   = "弱い確証バイアス・相互作用あり条件の代表試行における正規化分極度"
+unit      = "ratio"
+direction = "none"
+range     = [0.0, 1.0]
+scope     = ["run"]
+
+[metrics."bias-weak_interact_mean_final_bias"]
+meaning   = "弱い確証バイアス・相互作用あり条件の試行群にわたる最終意見平均 B の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-weak_interact_mean_final_diversity"]
+meaning   = "弱い確証バイアス・相互作用あり条件の試行群にわたる最終 Diversity D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-weak_interact_mean_final_clusters"]
+meaning   = "弱い確証バイアス・相互作用あり条件の試行群にわたる最終意見水準数の平均"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."bias-weak_interact_mean_diversity_drop"]
+meaning   = "弱い確証バイアス・相互作用あり条件の試行群にわたる初期 D − 最終 D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-weak_interact_mean_final_step"]
+meaning   = "弱い確証バイアス・相互作用あり条件の試行群にわたる停止ステップの平均"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+# 弱い確証バイアス・非相互作用統制条件
+
+[metrics."bias-weak_control_variance"]
+meaning   = "弱い確証バイアス・非相互作用統制条件の代表試行における 5 段階意見値の母分散"
+unit      = "opinion_squared"
+direction = "none"
+range     = [0.0, 4.0]
+scope     = ["run"]
+
+[metrics."bias-weak_control_bias"]
+meaning   = "弱い確証バイアス・非相互作用統制条件の代表試行における 5 段階意見値の平均 B"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-weak_control_diversity"]
+meaning   = "弱い確証バイアス・非相互作用統制条件の代表試行における 5 段階意見値の標準偏差 D"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-weak_control_n_clusters"]
+meaning   = "弱い確証バイアス・非相互作用統制条件の代表試行で占有されている相異なる意見水準の数"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."bias-weak_control_polarization"]
+meaning   = "弱い確証バイアス・非相互作用統制条件の代表試行における正規化分極度"
+unit      = "ratio"
+direction = "none"
+range     = [0.0, 1.0]
+scope     = ["run"]
+
+[metrics."bias-weak_control_mean_final_bias"]
+meaning   = "弱い確証バイアス・非相互作用統制条件の試行群にわたる最終意見平均 B の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-weak_control_mean_final_diversity"]
+meaning   = "弱い確証バイアス・非相互作用統制条件の試行群にわたる最終 Diversity D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-weak_control_mean_final_clusters"]
+meaning   = "弱い確証バイアス・非相互作用統制条件の試行群にわたる最終意見水準数の平均"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."bias-weak_control_mean_diversity_drop"]
+meaning   = "弱い確証バイアス・非相互作用統制条件の試行群にわたる初期 D − 最終 D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-weak_control_mean_final_step"]
+meaning   = "弱い確証バイアス・非相互作用統制条件の試行群にわたる停止ステップの平均"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+# 強い確証バイアス・相互作用あり条件
+
+[metrics."bias-strong_interact_variance"]
+meaning   = "強い確証バイアス・相互作用あり条件の代表試行における 5 段階意見値の母分散"
+unit      = "opinion_squared"
+direction = "none"
+range     = [0.0, 4.0]
+scope     = ["run"]
+
+[metrics."bias-strong_interact_bias"]
+meaning   = "強い確証バイアス・相互作用あり条件の代表試行における 5 段階意見値の平均 B"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-strong_interact_diversity"]
+meaning   = "強い確証バイアス・相互作用あり条件の代表試行における 5 段階意見値の標準偏差 D"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-strong_interact_n_clusters"]
+meaning   = "強い確証バイアス・相互作用あり条件の代表試行で占有されている相異なる意見水準の数"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."bias-strong_interact_polarization"]
+meaning   = "強い確証バイアス・相互作用あり条件の代表試行における正規化分極度"
+unit      = "ratio"
+direction = "none"
+range     = [0.0, 1.0]
+scope     = ["run"]
+
+[metrics."bias-strong_interact_mean_final_bias"]
+meaning   = "強い確証バイアス・相互作用あり条件の試行群にわたる最終意見平均 B の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-strong_interact_mean_final_diversity"]
+meaning   = "強い確証バイアス・相互作用あり条件の試行群にわたる最終 Diversity D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-strong_interact_mean_final_clusters"]
+meaning   = "強い確証バイアス・相互作用あり条件の試行群にわたる最終意見水準数の平均"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."bias-strong_interact_mean_diversity_drop"]
+meaning   = "強い確証バイアス・相互作用あり条件の試行群にわたる初期 D − 最終 D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-strong_interact_mean_final_step"]
+meaning   = "強い確証バイアス・相互作用あり条件の試行群にわたる停止ステップの平均"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+# 強い確証バイアス・非相互作用統制条件
+
+[metrics."bias-strong_control_variance"]
+meaning   = "強い確証バイアス・非相互作用統制条件の代表試行における 5 段階意見値の母分散"
+unit      = "opinion_squared"
+direction = "none"
+range     = [0.0, 4.0]
+scope     = ["run"]
+
+[metrics."bias-strong_control_bias"]
+meaning   = "強い確証バイアス・非相互作用統制条件の代表試行における 5 段階意見値の平均 B"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-strong_control_diversity"]
+meaning   = "強い確証バイアス・非相互作用統制条件の代表試行における 5 段階意見値の標準偏差 D"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-strong_control_n_clusters"]
+meaning   = "強い確証バイアス・非相互作用統制条件の代表試行で占有されている相異なる意見水準の数"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."bias-strong_control_polarization"]
+meaning   = "強い確証バイアス・非相互作用統制条件の代表試行における正規化分極度"
+unit      = "ratio"
+direction = "none"
+range     = [0.0, 1.0]
+scope     = ["run"]
+
+[metrics."bias-strong_control_mean_final_bias"]
+meaning   = "強い確証バイアス・非相互作用統制条件の試行群にわたる最終意見平均 B の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-strong_control_mean_final_diversity"]
+meaning   = "強い確証バイアス・非相互作用統制条件の試行群にわたる最終 Diversity D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-strong_control_mean_final_clusters"]
+meaning   = "強い確証バイアス・非相互作用統制条件の試行群にわたる最終意見水準数の平均"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."bias-strong_control_mean_diversity_drop"]
+meaning   = "強い確証バイアス・非相互作用統制条件の試行群にわたる初期 D − 最終 D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."bias-strong_control_mean_final_step"]
+meaning   = "強い確証バイアス・非相互作用統制条件の試行群にわたる停止ステップの平均"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+# 完全グラフ条件
+
+[metrics."topo-full_variance"]
+meaning   = "完全グラフ条件の代表試行における 5 段階意見値の母分散"
+unit      = "opinion_squared"
+direction = "none"
+range     = [0.0, 4.0]
+scope     = ["run"]
+
+[metrics."topo-full_bias"]
+meaning   = "完全グラフ条件の代表試行における 5 段階意見値の平均 B"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-full_diversity"]
+meaning   = "完全グラフ条件の代表試行における 5 段階意見値の標準偏差 D"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-full_n_clusters"]
+meaning   = "完全グラフ条件の代表試行で占有されている相異なる意見水準の数"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."topo-full_polarization"]
+meaning   = "完全グラフ条件の代表試行における正規化分極度"
+unit      = "ratio"
+direction = "none"
+range     = [0.0, 1.0]
+scope     = ["run"]
+
+[metrics."topo-full_mean_final_bias"]
+meaning   = "完全グラフ条件の試行群にわたる最終意見平均 B の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-full_mean_final_diversity"]
+meaning   = "完全グラフ条件の試行群にわたる最終 Diversity D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-full_mean_final_clusters"]
+meaning   = "完全グラフ条件の試行群にわたる最終意見水準数の平均"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."topo-full_mean_diversity_drop"]
+meaning   = "完全グラフ条件の試行群にわたる初期 D − 最終 D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-full_mean_final_step"]
+meaning   = "完全グラフ条件の試行群にわたる停止ステップの平均"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+# Erdős–Rényi 網条件
+
+[metrics."topo-er_variance"]
+meaning   = "Erdős–Rényi 網条件の代表試行における 5 段階意見値の母分散"
+unit      = "opinion_squared"
+direction = "none"
+range     = [0.0, 4.0]
+scope     = ["run"]
+
+[metrics."topo-er_bias"]
+meaning   = "Erdős–Rényi 網条件の代表試行における 5 段階意見値の平均 B"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-er_diversity"]
+meaning   = "Erdős–Rényi 網条件の代表試行における 5 段階意見値の標準偏差 D"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-er_n_clusters"]
+meaning   = "Erdős–Rényi 網条件の代表試行で占有されている相異なる意見水準の数"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."topo-er_polarization"]
+meaning   = "Erdős–Rényi 網条件の代表試行における正規化分極度"
+unit      = "ratio"
+direction = "none"
+range     = [0.0, 1.0]
+scope     = ["run"]
+
+[metrics."topo-er_mean_final_bias"]
+meaning   = "Erdős–Rényi 網条件の試行群にわたる最終意見平均 B の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-er_mean_final_diversity"]
+meaning   = "Erdős–Rényi 網条件の試行群にわたる最終 Diversity D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-er_mean_final_clusters"]
+meaning   = "Erdős–Rényi 網条件の試行群にわたる最終意見水準数の平均"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."topo-er_mean_diversity_drop"]
+meaning   = "Erdős–Rényi 網条件の試行群にわたる初期 D − 最終 D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-er_mean_final_step"]
+meaning   = "Erdős–Rényi 網条件の試行群にわたる停止ステップの平均"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+# Watts–Strogatz 網条件
+
+[metrics."topo-ws_variance"]
+meaning   = "Watts–Strogatz 網条件の代表試行における 5 段階意見値の母分散"
+unit      = "opinion_squared"
+direction = "none"
+range     = [0.0, 4.0]
+scope     = ["run"]
+
+[metrics."topo-ws_bias"]
+meaning   = "Watts–Strogatz 網条件の代表試行における 5 段階意見値の平均 B"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-ws_diversity"]
+meaning   = "Watts–Strogatz 網条件の代表試行における 5 段階意見値の標準偏差 D"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-ws_n_clusters"]
+meaning   = "Watts–Strogatz 網条件の代表試行で占有されている相異なる意見水準の数"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."topo-ws_polarization"]
+meaning   = "Watts–Strogatz 網条件の代表試行における正規化分極度"
+unit      = "ratio"
+direction = "none"
+range     = [0.0, 1.0]
+scope     = ["run"]
+
+[metrics."topo-ws_mean_final_bias"]
+meaning   = "Watts–Strogatz 網条件の試行群にわたる最終意見平均 B の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-ws_mean_final_diversity"]
+meaning   = "Watts–Strogatz 網条件の試行群にわたる最終 Diversity D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-ws_mean_final_clusters"]
+meaning   = "Watts–Strogatz 網条件の試行群にわたる最終意見水準数の平均"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."topo-ws_mean_diversity_drop"]
+meaning   = "Watts–Strogatz 網条件の試行群にわたる初期 D − 最終 D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-ws_mean_final_step"]
+meaning   = "Watts–Strogatz 網条件の試行群にわたる停止ステップの平均"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+# Barabási–Albert 網条件
+
+[metrics."topo-ba_variance"]
+meaning   = "Barabási–Albert 網条件の代表試行における 5 段階意見値の母分散"
+unit      = "opinion_squared"
+direction = "none"
+range     = [0.0, 4.0]
+scope     = ["run"]
+
+[metrics."topo-ba_bias"]
+meaning   = "Barabási–Albert 網条件の代表試行における 5 段階意見値の平均 B"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-ba_diversity"]
+meaning   = "Barabási–Albert 網条件の代表試行における 5 段階意見値の標準偏差 D"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-ba_n_clusters"]
+meaning   = "Barabási–Albert 網条件の代表試行で占有されている相異なる意見水準の数"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."topo-ba_polarization"]
+meaning   = "Barabási–Albert 網条件の代表試行における正規化分極度"
+unit      = "ratio"
+direction = "none"
+range     = [0.0, 1.0]
+scope     = ["run"]
+
+[metrics."topo-ba_mean_final_bias"]
+meaning   = "Barabási–Albert 網条件の試行群にわたる最終意見平均 B の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-ba_mean_final_diversity"]
+meaning   = "Barabási–Albert 網条件の試行群にわたる最終 Diversity D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [0.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-ba_mean_final_clusters"]
+meaning   = "Barabási–Albert 網条件の試行群にわたる最終意見水準数の平均"
+unit      = "count"
+direction = "none"
+range     = [0.0, 5.0]
+scope     = ["run"]
+
+[metrics."topo-ba_mean_diversity_drop"]
+meaning   = "Barabási–Albert 網条件の試行群にわたる初期 D − 最終 D の平均"
+unit      = "opinion"
+direction = "none"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."topo-ba_mean_final_step"]
+meaning   = "Barabási–Albert 網条件の試行群にわたる停止ステップの平均"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
+
+# --- reproduce の定性的アンカー ------------------------------------------
+
+[metrics."anchor_consensus_drift_no_bias"]
+meaning   = "バイアス無し相互作用条件における初期 D − 最終 D"
+unit      = "opinion"
+direction = "up"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."anchor_diversity_monotone_weak_ge_none"]
+meaning   = "弱バイアス条件の最終 D からバイアス無し条件の最終 D を引いた差"
+unit      = "opinion"
+direction = "up"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."anchor_diversity_monotone_strong_ge_weak"]
+meaning   = "強バイアス条件の最終 D から弱バイアス条件の最終 D を引いた差"
+unit      = "opinion"
+direction = "up"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."anchor_interaction_drives_consensus"]
+meaning   = "強バイアス非相互作用条件の最終 D からバイアス無し相互作用条件の最終 D を引いた差"
+unit      = "opinion"
+direction = "up"
+range     = [-2.0, 2.0]
+scope     = ["run"]
+
+[metrics."anchor_social_amplifies_drift"]
+meaning   = "バイアス無し条件で，相互作用ありの D 縮小幅から非相互作用統制の縮小幅を引いた差"
+unit      = "opinion"
+direction = "up"
+range     = [-4.0, 4.0]
+scope     = ["run"]
+
+[metrics."checks_passed"]
+meaning   = "定性的アンカーの許容帯に収まった観測量の数"
+unit      = "count"
+direction = "up"
+scope     = ["run"]
+
+[metrics."checks_total"]
+meaning   = "照合した定性的アンカーの総数"
+unit      = "count"
+direction = "none"
+scope     = ["run"]
